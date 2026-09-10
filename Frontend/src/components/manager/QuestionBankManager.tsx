@@ -327,15 +327,35 @@ function parseAiText(
           if (opts[idx]) ans = opts[idx];
         }
 
+        const rawDiff = String(itemObj.difficulty || fallbackDifficulty).toLowerCase();
+        let normDifficulty = 'medium';
+        if (rawDiff.includes('easy') || rawDiff.includes('simple')) normDifficulty = 'easy';
+        else if (rawDiff.includes('hard') || rawDiff.includes('difficult') || rawDiff.includes('deficult')) normDifficulty = 'hard';
+
+        const rawType = String(itemObj.type || itemObj.question_type || fallbackType).toLowerCase();
+        let normType = 'mcq';
+        if (rawType.includes('true') || rawType.includes('boolean')) normType = 'true_false';
+        else if (rawType.includes('short')) normType = 'short';
+        else if (rawType.includes('long') || rawType.includes('essay')) normType = 'long';
+        else if (rawType.includes('fill') || rawType.includes('blank')) normType = 'fill_blank';
+        else if (rawType.includes('code') || rawType.includes('coding') || rawType.includes('practical')) normType = 'coding';
+
         mappedQuestions.push({
           topic: String(itemObj.topic || fallbackTopic),
           question_text: qText,
-          type: String(itemObj.type || itemObj.question_type || fallbackType),
-          difficulty: String(itemObj.difficulty || fallbackDifficulty),
-          options: opts.length >= 2 ? opts : undefined,
+          type: normType,
+          difficulty: normDifficulty,
+          options: opts.length >= 2 ? opts : (normType === 'true_false' ? ['True', 'False'] : undefined),
           correct_answer: ans,
           explanation: String(itemObj.explanation || itemObj.Explanation || ''),
-          marks: Number(itemObj.marks) || 1,
+          language: String(itemObj.language || itemObj.target_language || 'python'),
+          input_format: String(itemObj.input_format || itemObj.inputFormat || ''),
+          output_format: String(itemObj.output_format || itemObj.outputFormat || ''),
+          constraints: String(itemObj.constraints || ''),
+          sample_input: String(itemObj.sample_input || itemObj.sampleInput || ''),
+          sample_output: String(itemObj.sample_output || itemObj.sampleOutput || ''),
+          test_cases: (Array.isArray(itemObj.test_cases) ? itemObj.test_cases : (Array.isArray(itemObj.testCases) ? itemObj.testCases : [])) as TestCaseFormItem[],
+          marks: Number(itemObj.marks) || (normDifficulty === 'hard' ? 5 : normDifficulty === 'medium' ? 2 : 1),
         });
       }
 
@@ -740,10 +760,17 @@ export function QuestionBankManager({
         type: q.type || globalType,
         difficulty: q.difficulty || globalDifficulty,
         question_text: q.question_text,
-        options: (q.options && q.options.length >= 2) ? q.options : ['', '', '', ''],
+        options: (q.options && q.options.length >= 2) ? q.options : (q.type === 'true_false' ? ['True', 'False'] : ['', '', '', '']),
         correct_answer: q.correct_answer || '',
-        explanation: q.explanation || '',
-        marks: q.marks || globalMarks,
+        explanation: (q.explanation || (q as Record<string, unknown>).explanation || '') as string,
+        language: ((q as Record<string, unknown>).language || 'python') as string,
+        input_format: ((q as Record<string, unknown>).input_format || '') as string,
+        output_format: ((q as Record<string, unknown>).output_format || '') as string,
+        constraints: ((q as Record<string, unknown>).constraints || '') as string,
+        sample_input: ((q as Record<string, unknown>).sample_input || '') as string,
+        sample_output: ((q as Record<string, unknown>).sample_output || '') as string,
+        test_cases: ((q as Record<string, unknown>).test_cases || []) as TestCaseFormItem[],
+        marks: q.marks || (q.difficulty === 'hard' ? 5 : q.difficulty === 'medium' ? 2 : 1),
       }));
       setBatchQuestions(prev => [...prev, ...newForms]);
       setShowRaw(false);

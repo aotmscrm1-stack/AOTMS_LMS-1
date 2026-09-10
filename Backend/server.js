@@ -745,158 +745,409 @@ app.post('/api/zoom/webhook', async (req, res) => {
 
 
 // --- Question Bank Generator Proxy ---
+// --- Question Bank Generator Proxy ---
 app.post('/api/manager/generate-questions', authenticateToken, requireInstructor, async (req, res) => {
-    console.log('[API] Generate Questions Request:', req.body.topic, req.body.type);
+    console.log('[API] Generate Questions Request:', req.body.topic, req.body.type, req.body.difficulty, req.body.count);
     const { topic, type, count, difficulty, prompt } = req.body;
 
-    const aiAgentApiKey = (process.env.AI_AGENT_API || '').trim();
+    const aiAgentApiKey = (process.env.AI_AGENT_API || process.env.OPENAI_API_KEY || '').trim();
+    const geminiApiKey = (process.env.GEMINI_API_KEY || '').trim();
 
-    const buildMockQuestion = (qType, qTopic, qDifficulty) => {
-        const shortType = qType?.toLowerCase();
-        if (shortType === 'true_false') {
-            return {
-                topic: qTopic || "General",
-                question_text: "Is the server correctly running?",
-                type: "true_false",
-                difficulty: qDifficulty || "medium",
-                options: ["True", "False"],
-                correct_answer: "True",
-                explanation: "This is a simple explanation.",
-                marks: 1
-            };
+    const normalizedDifficulty = (() => {
+        const d = (difficulty || 'medium').toLowerCase().trim();
+        if (d.includes('easy') || d.includes('simple')) return 'easy';
+        if (d.includes('hard') || d.includes('difficult') || d.includes('deficult') || d.includes('advanced')) return 'hard';
+        return 'medium';
+    })();
+
+    const normalizedType = (() => {
+        const t = (type || 'mcq').toLowerCase().trim();
+        if (t.includes('true') || t.includes('boolean')) return 'true_false';
+        if (t.includes('short')) return 'short_answer';
+        if (t.includes('long') || t.includes('essay')) return 'long_answer';
+        if (t.includes('fill') || t.includes('blank')) return 'fill_blank';
+        if (t.includes('code') || t.includes('coding') || t.includes('practical')) return 'coding';
+        return 'mcq';
+    })();
+
+    const numCount = Math.max(1, parseInt(count) || 1);
+
+    const buildMockQuestionList = (qType, qTopic, qDiff, reqCount) => {
+        const isEasy = qDiff === 'easy';
+        const isHard = qDiff === 'hard';
+        const marks = isHard ? 5 : isEasy ? 1 : 2;
+        const topicName = qTopic || 'General';
+
+        const list = [];
+        for (let i = 0; i < reqCount; i++) {
+            const idxSuffix = reqCount > 1 ? ` (Set ${i + 1})` : '';
+
+            if (qType === 'true_false') {
+                if (isEasy) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Is HTML used primarily for defining the structure of web pages${idxSuffix}?`,
+                        type: 'true_false',
+                        difficulty: 'easy',
+                        options: ['True', 'False'],
+                        correct_answer: 'True',
+                        explanation: 'HTML provides the basic structural framework for web documents.',
+                        marks: 1
+                    });
+                } else if (isHard) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `In JavaScript, is 'typeof null === "object"' due to an unfixable historical legacy bug in the initial JS engine${idxSuffix}?`,
+                        type: 'true_false',
+                        difficulty: 'hard',
+                        options: ['True', 'False'],
+                        correct_answer: 'True',
+                        explanation: 'In the original JS implementation, values were represented as a type tag and a value. Null had a type tag of 0 (object).',
+                        marks: 5
+                    });
+                } else {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Does JavaScript execute code asynchronously using a single-threaded event loop architecture${idxSuffix}?`,
+                        type: 'true_false',
+                        difficulty: 'medium',
+                        options: ['True', 'False'],
+                        correct_answer: 'True',
+                        explanation: 'JavaScript uses a single event-driven thread with non-blocking I/O callbacks.',
+                        marks: 2
+                    });
+                }
+            } else if (qType === 'short_answer' || qType === 'short') {
+                if (isEasy) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `What command is used to create a new branch in Git${idxSuffix}?`,
+                        type: 'short_answer',
+                        difficulty: 'easy',
+                        correct_answer: 'git branch <branch-name> or git checkout -b <branch-name>',
+                        explanation: 'git branch creates a new branch, checkout -b creates and switches to it.',
+                        marks: 1
+                    });
+                } else if (isHard) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Explain how closures in JavaScript retain access to outer variables even after the outer function has returned execution${idxSuffix}.`,
+                        type: 'short_answer',
+                        difficulty: 'hard',
+                        correct_answer: 'Closures maintain a reference to their outer Lexical Environment Record on the heap, preventing garbage collection.',
+                        explanation: 'Functions hold hidden [[Environment]] references to the scope chain where they were declared.',
+                        marks: 5
+                    });
+                } else {
+                    list.push({
+                        topic: topicName,
+                        question_text: `What is the key difference between 'let' and 'var' declarations in JavaScript${idxSuffix}?`,
+                        type: 'short_answer',
+                        difficulty: 'medium',
+                        correct_answer: "'let' is block-scoped and does not hoist with initialization, whereas 'var' is function-scoped and hoisted.",
+                        explanation: "'let' resides in Temporal Dead Zone before declaration.",
+                        marks: 2
+                    });
+                }
+            } else if (qType === 'long_answer' || qType === 'long') {
+                if (isEasy) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Describe the core purpose of a Database Primary Key and why it is important${idxSuffix}.`,
+                        type: 'long_answer',
+                        difficulty: 'easy',
+                        correct_answer: 'A Primary Key uniquely identifies each row in a database table, ensuring data integrity and enabling indexed fast lookups.',
+                        explanation: 'Primary keys enforce uniqueness and prevent duplicate rows.',
+                        marks: 2
+                    });
+                } else if (isHard) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Critically analyze the architectural trade-offs between SQL (Relational) and NoSQL (Document/Key-Value) databases for high-throughput microservice systems${idxSuffix}.`,
+                        type: 'long_answer',
+                        difficulty: 'hard',
+                        correct_answer: 'SQL databases guarantee ACID compliance and complex relational joins but scale vertically. NoSQL databases offer horizontal scaling, flexible schemas, and high write throughput, but sacrifice strict immediate consistency (BASE / eventual consistency).',
+                        explanation: 'Trade-offs involve CAP theorem, schema flexibility vs data integrity constraints.',
+                        marks: 5
+                    });
+                } else {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Explain the ACID properties of database transactions with relevant examples${idxSuffix}.`,
+                        type: 'long_answer',
+                        difficulty: 'medium',
+                        correct_answer: 'ACID stands for Atomicity (all or nothing), Consistency (valid state transitions), Isolation (concurrent transactions do not collide), and Durability (saved data survives crashes).',
+                        explanation: 'Guarantees reliable database transaction execution.',
+                        marks: 3
+                    });
+                }
+            } else if (qType === 'fill_blank') {
+                if (isEasy) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `CSS stands for _______ Style Sheets${idxSuffix}.`,
+                        type: 'fill_blank',
+                        difficulty: 'easy',
+                        correct_answer: 'Cascading',
+                        explanation: 'CSS stands for Cascading Style Sheets.',
+                        marks: 1
+                    });
+                } else if (isHard) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `The CAP theorem states that a distributed system can simultaneously guarantee only two out of Consistency, Availability, and _______ Tolerance${idxSuffix}.`,
+                        type: 'fill_blank',
+                        difficulty: 'hard',
+                        correct_answer: 'Partition',
+                        explanation: 'Partition Tolerance is mandatory in distributed networks.',
+                        marks: 5
+                    });
+                } else {
+                    list.push({
+                        topic: topicName,
+                        question_text: `In RESTful API design, the HTTP _______ method is used to update existing resources completely${idxSuffix}.`,
+                        type: 'fill_blank',
+                        difficulty: 'medium',
+                        correct_answer: 'PUT',
+                        explanation: 'PUT replaces existing resource representation, PATCH updates partial fields.',
+                        marks: 2
+                    });
+                }
+            } else if (qType === 'coding') {
+                if (isEasy) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Write a program to calculate the sum of two integers${idxSuffix}.`,
+                        type: 'coding',
+                        difficulty: 'easy',
+                        language: 'python',
+                        input_format: 'First line: Integer A\nSecond line: Integer B',
+                        output_format: 'Single integer representing A + B',
+                        constraints: '-10^6 <= A, B <= 10^6',
+                        sample_input: '5\n10',
+                        sample_output: '15',
+                        correct_answer: 'a = int(input())\nb = int(input())\nprint(a + b)',
+                        explanation: 'Reads two integers from standard input and prints their sum.',
+                        test_cases: [
+                            { input: '5\n10', expected_output: '15', explanation: '5 + 10 = 15', is_hidden: false },
+                            { input: '-3\n8', expected_output: '5', explanation: '-3 + 8 = 5', is_hidden: true }
+                        ],
+                        marks: 2
+                    });
+                } else if (isHard) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Write an optimal O(N) solution to find two indices in an array that add up to a target sum (Two Sum Problem)${idxSuffix}.`,
+                        type: 'coding',
+                        difficulty: 'hard',
+                        language: 'python',
+                        input_format: 'Line 1: Space-separated integers representing nums array\nLine 2: Target integer',
+                        output_format: 'Space-separated pair of 0-based indices sorted in ascending order',
+                        constraints: '2 <= len(nums) <= 10^5, -10^9 <= nums[i], target <= 10^9',
+                        sample_input: '2 7 11 15\n9',
+                        sample_output: '0 1',
+                        correct_answer: `import sys
+
+def solve():
+    lines = sys.stdin.read().splitlines()
+    if not lines: return
+    nums = list(map(int, lines[0].split()))
+    target = int(lines[1])
+    seen = {}
+    for i, n in enumerate(nums):
+        diff = target - n
+        if diff in seen:
+            print(f"{seen[diff]} {i}")
+            return
+        seen[n] = i
+
+solve()`,
+                        explanation: 'Uses a Hash Map lookup table to achieve O(N) time and O(N) space complexity.',
+                        test_cases: [
+                            { input: '2 7 11 15\n9', expected_output: '0 1', explanation: 'nums[0] + nums[1] = 2 + 7 = 9', is_hidden: false },
+                            { input: '3 2 4\n6', expected_output: '1 2', explanation: 'nums[1] + nums[2] = 2 + 4 = 6', is_hidden: true }
+                        ],
+                        marks: 5
+                    });
+                } else {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Write a program to check if a given string is a Palindrome (ignoring spaces and casing)${idxSuffix}.`,
+                        type: 'coding',
+                        difficulty: 'medium',
+                        language: 'python',
+                        input_format: 'Single string line',
+                        output_format: 'Print "True" if palindrome, else "False"',
+                        constraints: '1 <= len(s) <= 10^4',
+                        sample_input: 'racecar',
+                        sample_output: 'True',
+                        correct_answer: `s = input().strip().lower()
+s_clean = ''.join(c for c in s if c.isalnum())
+print('True' if s_clean == s_clean[::-1] else 'False')`,
+                        explanation: 'Filters non-alphanumeric characters, converts to lowercase, and compares with reverse.',
+                        test_cases: [
+                            { input: 'racecar', expected_output: 'True', explanation: 'racecar reversed is racecar', is_hidden: false },
+                            { input: 'hello', expected_output: 'False', explanation: 'hello is not a palindrome', is_hidden: true }
+                        ],
+                        marks: 3
+                    });
+                }
+            } else {
+                // Default MCQ
+                if (isEasy) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Which protocol is the primary standard for secure web communication${idxSuffix}?`,
+                        type: 'mcq',
+                        difficulty: 'easy',
+                        options: ['HTTPS', 'FTP', 'SMTP', 'SSH'],
+                        correct_answer: 'HTTPS',
+                        explanation: 'HTTPS encrypts web data transfer using TLS/SSL.',
+                        marks: 1
+                    });
+                } else if (isHard) {
+                    list.push({
+                        topic: topicName,
+                        question_text: `What is the worst-case time complexity of QuickSort when using a naive deterministic pivot selection on an already sorted array${idxSuffix}?`,
+                        type: 'mcq',
+                        difficulty: 'hard',
+                        options: ['O(N^2)', 'O(N log N)', 'O(N)', 'O(log N)'],
+                        correct_answer: 'O(N^2)',
+                        explanation: 'Selecting first/last element as pivot on sorted input creates unbalanced 1:N-1 partitions at each step.',
+                        marks: 5
+                    });
+                } else {
+                    list.push({
+                        topic: topicName,
+                        question_text: `Which data structure operates strictly on a First-In-First-Out (FIFO) principle${idxSuffix}?`,
+                        type: 'mcq',
+                        difficulty: 'medium',
+                        options: ['Queue', 'Stack', 'Binary Tree', 'Heap'],
+                        correct_answer: 'Queue',
+                        explanation: 'Queue inserts at rear and removes from front (FIFO).',
+                        marks: 2
+                    });
+                }
+            }
         }
-        if (shortType === 'short' || shortType === 'short_answer') {
-            return {
-                topic: qTopic || "General",
-                question_text: "State the primary method to authenticate API key.",
-                type: "short_answer",
-                difficulty: qDifficulty || "medium",
-                correct_answer: "Process API key headers.",
-                explanation: "This is a simple explanation.",
-                marks: 1
-            };
-        }
-        if (shortType === 'long' || shortType === 'long_answer') {
-            return {
-                topic: qTopic || "General",
-                question_text: "Explain the concept of API routing.",
-                type: "long_answer",
-                difficulty: qDifficulty || "medium",
-                correct_answer: "API routing processes requests dynamically through express routes.",
-                explanation: "This is a simple explanation.",
-                marks: 5
-            };
-        }
-        if (shortType === 'fill_blank') {
-            return {
-                topic: qTopic || "General",
-                question_text: "AOTMS uses _______ for databases.",
-                type: "fill_blank",
-                difficulty: qDifficulty || "medium",
-                correct_answer: "MongoDB",
-                explanation: "This is a simple explanation.",
-                marks: 1
-            };
-        }
-        if (shortType === 'coding') {
-            return {
-                topic: qTopic || "General",
-                question_text: "Write code to log 'Hello World'.",
-                type: "coding",
-                difficulty: qDifficulty || "medium",
-                correct_answer: "console.log('Hello World');",
-                explanation: "This is a simple explanation.",
-                marks: 5
-            };
-        }
-        // Default MCQ
-        return {
-            topic: qTopic || "General",
-            question_text: "Which protocol is standard for web traffic?",
-            type: "mcq",
-            difficulty: qDifficulty || "medium",
-            options: ["HTTP", "FTP", "SMTP", "SSH"],
-            correct_answer: "HTTP",
-            explanation: "This is a simple explanation.",
-            marks: 1
-        };
+        return list;
     };
 
-    if (!aiAgentApiKey) {
-        console.warn('[AI_AGENT_API] Key is missing in .env. Returning local mock questions.');
-        const mockQ = buildMockQuestion(type, topic, difficulty);
-        return res.json({
-            testing_msg: "testing HI message Received an Output",
-            ai_agent_api: "none",
-            questions: [mockQ]
-        });
-    }
+    const systemPrompt = `You are an expert academic and technical quiz generator.
+Generate exactly ${numCount} questions on the topic '${topic || 'General'}'.
+QUESTION TYPE: '${normalizedType}'
+DIFFICULTY LEVEL: '${normalizedDifficulty}'
+EXTRA INSTRUCTIONS: ${prompt || 'None'}
 
-    try {
-        console.log(`[AI_AGENT_API Trigger] Calling OpenAI chat/completions using Project Key...`);
-        console.log("testing HI message Received an Output.");
+DIFFICULTY LEVEL RULES (STRICTLY COMPLY):
+- 'easy': Basic, fundamental questions testing core definitions, direct facts, or 1-step direct operations. Marks = 1.
+- 'medium': Intermediate questions testing conceptual application, reasoning, standard algorithms, or multi-step analysis. Marks = 2.
+- 'hard' (Difficult): Advanced, complex questions testing edge cases, optimization, multi-step problem solving, or deep architecture. Marks = 5.
 
-        const systemPrompt = `You are an expert quiz generator. Generate exactly ${count || 1} questions of type '${type || 'mcq'}' on the topic '${topic || 'General'}' with a difficulty level of '${difficulty || 'medium'}'.
-Extra instructions: ${prompt || 'None'}.
+QUESTION TYPE SPECIFIC FORMAT RULES:
+1. 'mcq': Include exactly 4 options in "options" array. "correct_answer" MUST match one of the 4 option strings exactly.
+2. 'true_false': Set "options" to ["True", "False"]. "correct_answer" MUST be "True" or "False".
+3. 'short_answer' or 'short': Provide a clear 1-2 sentence answer in "correct_answer".
+4. 'long_answer' or 'long': Provide a detailed comprehensive explanation/essay in "correct_answer".
+5. 'fill_blank': "question_text" MUST contain '_______' for the missing blank. "correct_answer" MUST contain the exact word/phrase.
+6. 'coding': "question_text" MUST be a detailed programming challenge. Provide "language" (e.g. 'python'), "input_format", "output_format", "constraints", "sample_input", "sample_output", "correct_answer" (working code), and "test_cases" array: [{"input": "...", "expected_output": "...", "explanation": "...", "is_hidden": false}].
 
-You MUST reply with a JSON object in this exact schema:
+You MUST reply with a clean JSON object adhering to this schema:
 {
   "questions": [
     {
       "topic": "${topic || 'General'}",
-      "question_text": "Question text here",
-      "type": "${type || 'mcq'}",
-      "difficulty": "${difficulty || 'medium'}",
-      "options": ["Option A", "Option B", "Option C", "Option D"], // ONLY include for mcq or true_false (options should be ["True", "False"] for true_false)
-      "correct_answer": "Option text of the correct answer, or True/False, or text containing the exact correct answer/code",
-      "explanation": "Simple explanation describing why this answer is correct",
-      "marks": 1
+      "question_text": "Question text",
+      "type": "${normalizedType}",
+      "difficulty": "${normalizedDifficulty}",
+      "options": ["Opt 1", "Opt 2", "Opt 3", "Opt 4"],
+      "correct_answer": "Correct answer",
+      "explanation": "Detailed explanation matching difficulty",
+      "marks": ${normalizedDifficulty === 'hard' ? 5 : normalizedDifficulty === 'medium' ? 2 : 1},
+      "language": "python",
+      "input_format": "",
+      "output_format": "",
+      "constraints": "",
+      "sample_input": "",
+      "sample_output": "",
+      "test_cases": []
     }
   ]
 }
-Do not include any Markdown wrapper like \`\`\`json or text explanation around the JSON, just a clean JSON output.`;
+Return raw JSON with NO markdown code blocks (\`\`\`json).`;
 
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model: 'gpt-4o-mini',
-            messages: [
-                { role: 'user', content: systemPrompt }
-            ],
-            temperature: 0.7,
-            response_format: { type: 'json_object' }
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${aiAgentApiKey}`
-            },
-            timeout: 60000
+    if (!aiAgentApiKey && !geminiApiKey) {
+        console.warn('[AI_AGENT_API] No AI key found in .env. Returning difficulty-aligned mock questions.');
+        const mockQuestions = buildMockQuestionList(normalizedType, topic, normalizedDifficulty, numCount);
+        return res.json({
+            testing_msg: "Local AI Mock Generator Active",
+            ai_agent_api: "none",
+            questions: mockQuestions
         });
+    }
 
-        const content = response.data.choices[0].message.content;
-        let data = JSON.parse(content);
+    try {
+        let content = '';
 
-        if (data && typeof data === 'object') {
-            if (Array.isArray(data)) {
-                data = { questions: data };
-            }
-            data.testing_msg = "testing HI message Received an Output";
-            data.ai_agent_api = aiAgentApiKey;
+        if (aiAgentApiKey) {
+            console.log(`[AI_AGENT_API Trigger] Generating ${numCount} ${normalizedDifficulty} ${normalizedType} questions via OpenAI...`);
+            const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+                model: 'gpt-4o-mini',
+                messages: [
+                    { role: 'user', content: systemPrompt }
+                ],
+                temperature: 0.7,
+                response_format: { type: 'json_object' }
+            }, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${aiAgentApiKey}`
+                },
+                timeout: 60000
+            });
+            content = response.data.choices[0].message.content;
+        } else if (geminiApiKey) {
+            console.log(`[Gemini AI Trigger] Generating ${numCount} ${normalizedDifficulty} ${normalizedType} questions via Gemini...`);
+            const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+                contents: [{ parts: [{ text: systemPrompt }] }]
+            }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 60000
+            });
+            content = response.data.candidates[0].content.parts[0].text;
         }
 
-        console.log(`[AI_AGENT_API Success] Successfully generated ${data.questions ? data.questions.length : 0} questions via OpenAI.`);
+        // Clean markdown fences if model included any
+        let cleanContent = content.trim();
+        const fenceMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        if (fenceMatch) cleanContent = fenceMatch[1].trim();
+
+        let data = JSON.parse(cleanContent);
+        if (Array.isArray(data)) {
+            data = { questions: data };
+        }
+        if (!data.questions || !Array.isArray(data.questions)) {
+            data = { questions: [data] };
+        }
+
+        data.testing_msg = `Generated ${data.questions.length} questions successfully`;
+        data.ai_agent_api = aiAgentApiKey ? 'openai' : 'gemini';
+
+        console.log(`[AI Success] Generated ${data.questions.length} ${normalizedDifficulty} ${normalizedType} questions.`);
         res.json(data);
 
     } catch (error) {
-        console.error('Error generating questions via OpenAI API:', error.message);
+        console.error('Error generating questions via AI API:', error.message);
         if (error.response) {
-            console.error('OpenAI Error Details:', JSON.stringify(error.response.data));
+            console.error('AI API Error Details:', JSON.stringify(error.response.data));
         }
 
-        console.log(`[AI_AGENT_API Fallback] Returning mock question under error.`);
-        const mockQ = buildMockQuestion(type, topic, difficulty);
+        console.log(`[AI Fallback] Returning difficulty-aligned mock questions under error.`);
+        const mockQuestions = buildMockQuestionList(normalizedType, topic, normalizedDifficulty, numCount);
         res.json({
-            testing_msg: "testing HI message Received an Output (fallback)",
-            ai_agent_api: aiAgentApiKey,
-            questions: [mockQ],
+            testing_msg: "Local AI Mock Generator Active (Fallback)",
+            ai_agent_api: aiAgentApiKey ? 'openai' : 'gemini',
+            questions: mockQuestions,
             error: error.message
         });
     }
