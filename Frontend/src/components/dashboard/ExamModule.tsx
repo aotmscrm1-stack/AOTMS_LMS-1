@@ -36,7 +36,7 @@ export function ExamModule({ type }: ExamModuleProps) {
     const { data: liveExams, isLoading: loadingExams } = useStudentExams();
     const { data: mockPapers, isLoading: loadingMocks } = useStudentMockPapers();
     const [activeExam, setActiveExam] = useState<StudentExam | null>(null);
-    const [showResults, setShowResults] = useState<{ id?: string, score: number, total: number, percentage: number, correctCount?: number, wrongCount?: number } | null>(null);
+    const [showResults, setShowResults] = useState<{ id?: string, score: number, total: number, percentage: number, correctCount?: number, wrongCount?: number, hasSubjective?: boolean } | null>(null);
     const [viewingReviewId, setViewingReviewId] = useState<string | null>(null);
     const [now, setNow] = useState(new Date());
     const { toast } = useToast();
@@ -66,7 +66,7 @@ export function ExamModule({ type }: ExamModuleProps) {
             const data = await fetchWithAuth('/student/submit-exam', {
                 method: 'POST',
                 body: JSON.stringify(results)
-            }) as { resultId: string, score: number, percentage: number, correctCount: number, wrongCount: number };
+            }) as { resultId: string, score: number, percentage: number, correctCount: number, wrongCount: number, hasSubjective?: boolean };
             
             setShowResults({
                 id: data.resultId,
@@ -74,7 +74,8 @@ export function ExamModule({ type }: ExamModuleProps) {
                 total: results.totalQuestions,
                 percentage: Math.round(data.percentage),
                 correctCount: data.correctCount,
-                wrongCount: data.wrongCount
+                wrongCount: data.wrongCount,
+                hasSubjective: data.hasSubjective
             });
 
             toast({
@@ -350,17 +351,21 @@ export function ExamModule({ type }: ExamModuleProps) {
                                             <div className="flex-1 p-3 rounded-2xl bg-emerald-50 border border-emerald-100 text-center">
                                                 <div className="flex items-center justify-center gap-1.5 text-emerald-600 mb-1">
                                                     <CheckCircle2 className="h-4 w-4" />
-                                                    <span className="text-[10px] font-black uppercase tracking-wider">Correct</span>
+                                                    <span className="text-[10px] font-black uppercase tracking-wider">
+                                                        {showResults.hasSubjective ? "Solved" : "Correct"}
+                                                    </span>
                                                 </div>
                                                 <div className="text-xl font-black text-emerald-700">{showResults.correctCount ?? showResults.score}</div>
                                             </div>
-                                            <div className="flex-1 p-3 rounded-2xl bg-red-50 border border-red-100 text-center">
-                                                <div className="flex items-center justify-center gap-1.5 text-red-600 mb-1">
-                                                    <XCircle className="h-4 w-4" />
-                                                    <span className="text-[10px] font-black uppercase tracking-wider">Wrong</span>
+                                            {!showResults.hasSubjective && (
+                                                <div className="flex-1 p-3 rounded-2xl bg-red-50 border border-red-100 text-center">
+                                                    <div className="flex items-center justify-center gap-1.5 text-red-600 mb-1">
+                                                        <XCircle className="h-4 w-4" />
+                                                        <span className="text-[10px] font-black uppercase tracking-wider">Wrong</span>
+                                                    </div>
+                                                    <div className="text-xl font-black text-red-700">{showResults.wrongCount ?? 0}</div>
                                                 </div>
-                                                <div className="text-xl font-black text-red-700">{showResults.wrongCount ?? 0}</div>
-                                            </div>
+                                            )}
                                             <div className="flex-1 p-3 rounded-2xl bg-slate-50 border border-slate-100 text-center">
                                                 <div className="flex items-center justify-center gap-1.5 text-slate-400 mb-1">
                                                     <BarChart className="h-4 w-4" />
