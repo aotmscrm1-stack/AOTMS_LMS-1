@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,13 @@ interface GrantStudentAccessProps {
     enrollments?: CourseEnrollment[];
 }
 
+const matchId = (a: any, b: any) => {
+  if (!a || !b) return false;
+  const sa = typeof a === 'object' ? (a.$oid || a.toString()) : String(a);
+  const sb = typeof b === 'object' ? (b.$oid || b.toString()) : String(b);
+  return sa === sb;
+};
+
 // Map course_type value → human label + visual style
 const COURSE_TYPE_META: Record<string, { label: string; icon: any; badgeClass: string; filterLabel: string }> = {
   full_time:  { label: 'Full-Time',   icon: GraduationCap, badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',   filterLabel: 'Full-Time Students'   },
@@ -57,6 +64,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<Profile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [localEnrollments, setLocalEnrollments] = useState<CourseEnrollment[]>([]);
   // 'all' | 'full_time' | 'internship'
   const [courseTypeFilter, setCourseTypeFilter] = useState<'all' | 'full_time' | 'internship'>('all');
   const queryClient = useQueryClient();
@@ -93,8 +101,9 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
     enabled: propEnrollments.length === 0,
   });
 
-  const profiles   = propProfiles.length > 0   ? propProfiles   : fetchedProfiles;
-  const enrollments = propEnrollments.length > 0 ? propEnrollments : fetchedEnrollments;
+  const profiles        = propProfiles.length > 0        ? propProfiles        : fetchedProfiles;
+  const baseEnrollments = propEnrollments.length > 0     ? propEnrollments     : fetchedEnrollments;
+  const enrollments     = useMemo(() => [...baseEnrollments, ...localEnrollments], [baseEnrollments, localEnrollments]);
 
   // Fetch all published/approved/active courses
   const { data: courses = [], isLoading: coursesLoading } = useQuery({
@@ -119,11 +128,10 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
     );
   });
 
-  // Courses available for the selected student — show ALL available courses (CRT, Full-Time, Internship, etc.)
+  // Courses available for the selected student — show ALL available courses except ones already actively enrolled in
   const availableCourses = courses.filter(course => {
     if (selectedStudent) {
-      // Exclude courses that the student is already actively enrolled in
-      if (enrollments.some(e => e.user_id === selectedStudent.id && e.course_id === course.id && e.status === 'active')) return false;
+      if (enrollments.some(e => matchId(e.user_id, selectedStudent.id) && matchId(e.course_id, course.id) && (e.status === 'active' || (e as any).status === 'enrolled'))) return false;
     }
     return true;
   });
@@ -147,8 +155,21 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
       });
     },
     onSuccess: () => {
+      if (_onSync) {
+        try { _onSync(); } catch (e) { /* ignore */ }
+      }
+      if (selectedStudent && selectedCourse) {
+        setLocalEnrollments(prev => [...prev, {
+          user_id: selectedStudent.id,
+          course_id: selectedCourse.id,
+          status: 'active',
+          progress_percentage: 0
+        } as any]);
+      }
       queryClient.invalidateQueries({ queryKey: ['grant-access-enrollments'] });
       queryClient.invalidateQueries({ queryKey: ['grant-access-profiles'] });
+      queryClient.invalidateQueries({ queryKey: ['course-enrollments'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       toast({ title: 'Access Granted', description: `${selectedStudent?.full_name} enrolled in "${selectedCourse?.title}"` });
       setSelectedStudent(null);
       setSelectedCourse(null);
@@ -172,9 +193,8 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
   // ── Count helpers for tab badges ──────────────────────────────────────────
   const countByType = (type: string) =>
     profiles.filter(p => {
-      const r = p.role?.toLowerCase();
-      return (r === 'student' || r === 'intern') &&
-        !enrollments.some(e => e.user_id === p.id) &&
+      const r = p.role?.toLowerCase() || 'student';
+      return (r === 'student' || r === 'intern' || r === 'user') &&
         (p as any).course_type === type;
     }).length;
 
@@ -372,7 +392,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
         {/* ── Course-Type Filter Tabs ────────────────────────────────────── */}
         <div className="flex items-center gap-2 mt-4 flex-wrap">
           {([
-            { key: 'all',        label: 'All Students',        count: profiles.filter(p => { const r = p.role?.toLowerCase(); return (r === 'student' || r === 'intern') && !enrollments.some(e => e.user_id === p.id); }).length },
+            { key: 'all',        label: 'All Students',        count: profiles.filter(p => { const r = p.role?.toLowerCase() || 'student'; return r === 'student' || r === 'intern' || r === 'user'; }).length },
             { key: 'full_time',  label: 'Full-Time',           count: countByType('full_time') },
             { key: 'internship', label: 'Internship',          count: countByType('internship') },
           ] as const).map(tab => (
