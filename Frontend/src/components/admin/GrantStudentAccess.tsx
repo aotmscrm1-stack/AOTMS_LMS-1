@@ -114,11 +114,13 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
     }
   });
 
-  // Filter students: matching role + search query + course_type tab
+  // Filter students: matching role + search query + course_type tab + NOT yet enrolled in any active course
   const filteredStudents = profiles.filter(profile => {
     const r = profile.role?.toLowerCase() || 'student';
     if (r !== 'student' && r !== 'intern' && r !== 'user') return false;
     if (courseTypeFilter !== 'all' && (profile as any).course_type !== courseTypeFilter) return false;
+    // Hide student if they are already enrolled in any course
+    if (enrollments.some(e => matchId(e.user_id, profile.id) && (e.status === 'active' || (e as any).status === 'enrolled' || !e.status))) return false;
     const q = searchQuery.toLowerCase();
     return (
       !q ||
@@ -128,7 +130,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
     );
   });
 
-  // Courses available for the selected student — show ALL available courses except ones already actively enrolled in
+  // Courses available for the selected student
   const availableCourses = courses.filter(course => {
     if (selectedStudent) {
       if (enrollments.some(e => matchId(e.user_id, selectedStudent.id) && matchId(e.course_id, course.id) && (e.status === 'active' || (e as any).status === 'enrolled'))) return false;
@@ -195,6 +197,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
     profiles.filter(p => {
       const r = p.role?.toLowerCase() || 'student';
       return (r === 'student' || r === 'intern' || r === 'user') &&
+        !enrollments.some(e => matchId(e.user_id, p.id) && (e.status === 'active' || (e as any).status === 'enrolled' || !e.status)) &&
         (p as any).course_type === type;
     }).length;
 
@@ -392,7 +395,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
         {/* ── Course-Type Filter Tabs ────────────────────────────────────── */}
         <div className="flex items-center gap-2 mt-4 flex-wrap">
           {([
-            { key: 'all',        label: 'All Students',        count: profiles.filter(p => { const r = p.role?.toLowerCase() || 'student'; return r === 'student' || r === 'intern' || r === 'user'; }).length },
+            { key: 'all',        label: 'All Students',        count: profiles.filter(p => { const r = p.role?.toLowerCase() || 'student'; return (r === 'student' || r === 'intern' || r === 'user') && !enrollments.some(e => matchId(e.user_id, p.id) && (e.status === 'active' || (e as any).status === 'enrolled' || !e.status)); }).length },
             { key: 'full_time',  label: 'Full-Time',           count: countByType('full_time') },
             { key: 'internship', label: 'Internship',          count: countByType('internship') },
           ] as const).map(tab => (
