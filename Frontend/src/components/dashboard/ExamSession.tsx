@@ -128,34 +128,54 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
     return () => window.removeEventListener('keydown', handleEsc);
   }, []);
 
-  const handleComplete = React.useCallback(() => {
+  // Submission & Loading State
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const executeSubmit = React.useCallback(async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setShowSubmitConfirm(false);
+
+    try {
+      const results = {
+        examId,
+        totalQuestions: questions?.length || 0,
+        answers: answers,
+        timeSpent: Math.max(0, (durationMinutes * 60) - timeLeft),
+      };
+      await onFinish(results);
+    } catch (err) {
+      console.error("Submission error:", err);
+      toast({
+        title: "Submission Error",
+        description: "Failed to submit assessment. Please try again.",
+        variant: "destructive"
+      });
+      setIsSubmitting(false);
+    }
+  }, [isSubmitting, examId, questions?.length, answers, durationMinutes, timeLeft, onFinish, toast]);
+
+  const handleFinishClick = () => {
+    if (isSubmitting) return;
     if (type === 'mock' && Object.keys(answers).length < (questions?.length || 0)) {
       toast({
         title: "Incomplete Assessment",
         description: `You have answered ${Object.keys(answers).length} of ${questions?.length} questions.`,
         variant: "destructive",
       });
-      // Allow submission anyway if time is up, but warn if manual
-      if (timeLeft > 0) return; 
     }
+    setShowSubmitConfirm(true);
+  };
 
-    const results = {
-        examId,
-        totalQuestions: questions?.length || 0,
-        answers: answers,
-        timeSpent: Math.max(0, (durationMinutes * 60) - timeLeft),
-        // Score calculation should ideally happen on backend to be secure
-        // But we pass answers for processing
-    };
-    onFinish(results);
-  }, [answers, durationMinutes, examId, onFinish, questions?.length, timeLeft, type, toast]);
+  const handleComplete = executeSubmit;
 
   // Robust real-time timer calculation based on absolute system clock
   useEffect(() => {
     if (timeLeft <= 0) {
       setIsTimeOver(true);
       const submitTimeout = setTimeout(() => {
-        handleComplete();
+        executeSubmit();
       }, 4000);
       return () => clearTimeout(submitTimeout);
     }
@@ -167,12 +187,12 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
       if (remaining <= 0) {
         setIsTimeOver(true);
         clearInterval(timer);
-        handleComplete();
+        executeSubmit();
       }
     }, 250); // Tick 4 times a second to keep screen representation flawlessly accurate
 
     return () => clearInterval(timer);
-  }, [endTime, handleComplete]);
+  }, [endTime, executeSubmit, timeLeft]);
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -618,15 +638,96 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
                     </Button>
                 </div>
                 <Button
-                    onClick={handleComplete}
-                    className="h-10 sm:h-12 px-4 sm:px-8 rounded-xl bg-slate-900 text-white hover:bg-black font-black uppercase tracking-wider text-[10px] sm:text-xs flex items-center gap-2 shadow-xl"
+                    onClick={handleFinishClick}
+                    disabled={isSubmitting}
+                    className="h-10 sm:h-12 px-4 sm:px-8 rounded-xl bg-slate-900 text-white hover:bg-black font-black uppercase tracking-wider text-[10px] sm:text-xs flex items-center gap-2 shadow-xl transition-all active:scale-95 disabled:opacity-80 disabled:cursor-not-allowed"
                 >
-                    <span className="hidden sm:inline">Finish Assessment</span>
-                    <span className="sm:hidden">Finish</span>
-                    <HelpCircle className="h-4 w-4 shrink-0" />
+                    {isSubmitting ? (
+                        <>
+                            <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
+                            <span>Submitting Exam...</span>
+                        </>
+                    ) : (
+                        <>
+                            <span className="hidden sm:inline">Finish Assessment</span>
+                            <span className="sm:hidden">Finish</span>
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                        </>
+                    )}
                 </Button>
             </div>
         </div>
+
+        {/* ── Submit Confirmation Dialog ─────────────────────────────────────── */}
+        <Dialog open={showSubmitConfirm} onOpenChange={(open) => !isSubmitting && setShowSubmitConfirm(open)}>
+            <DialogContent className="rounded-[2.5rem] sm:max-w-[450px] p-0 overflow-hidden border-none shadow-2xl">
+                <div className="bg-slate-900 p-8 text-white relative overflow-hidden">
+                    <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '24px 24px' }} />
+                    <div className="h-16 w-16 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-5 border border-white/20 shadow-xl relative z-10">
+                        <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+                    </div>
+                    <DialogTitle className="text-2xl font-black tracking-tight relative z-10">Submit Assessment?</DialogTitle>
+                    <DialogDescription className="text-slate-300 mt-2 font-medium relative z-10 text-xs leading-relaxed">
+                        Are you sure you want to finish and submit your exam? Once submitted, your responses will be evaluated.
+                    </DialogDescription>
+                </div>
+
+                <div className="p-8 bg-white space-y-6">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-100 flex flex-col justify-center">
+                            <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest leading-none mb-1">Answered</span>
+                            <span className="text-xl font-black text-emerald-900">{Object.keys(answers).length} / {questions?.length || 0}</span>
+                        </div>
+                        <div className={cn(
+                            "p-4 rounded-2xl flex flex-col justify-center border",
+                            ((questions?.length || 0) - Object.keys(answers).length) > 0
+                                ? "bg-amber-50/60 border-amber-100"
+                                : "bg-slate-50 border-slate-100"
+                        )}>
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Unanswered</span>
+                            <span className={cn("text-xl font-black", ((questions?.length || 0) - Object.keys(answers).length) > 0 ? "text-amber-600" : "text-slate-700")}>
+                                {(questions?.length || 0) - Object.keys(answers).length}
+                            </span>
+                        </div>
+                    </div>
+
+                    {((questions?.length || 0) - Object.keys(answers).length) > 0 && (
+                        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-3 text-amber-700 text-xs font-bold">
+                            <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                            <span>You still have unanswered questions remaining.</span>
+                        </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowSubmitConfirm(false)}
+                            disabled={isSubmitting}
+                            className="flex-1 h-12 rounded-xl border-2 border-slate-100 text-slate-600 font-bold hover:bg-slate-50 transition-all"
+                        >
+                            Review Exam
+                        </Button>
+                        <Button
+                            onClick={executeSubmit}
+                            disabled={isSubmitting}
+                            className="flex-1 h-12 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20 font-black uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-2"
+                        >
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                                    <span>Submitting...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span>Yes, Submit</span>
+                                    <ChevronRight className="h-4 w-4" />
+                                </>
+                            )}
+                        </Button>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
 
         <Dialog open={showExitConfirm} onOpenChange={setShowExitConfirm}>
             <DialogContent className="rounded-[2.5rem] sm:max-w-[420px] p-0 overflow-hidden border-none shadow-2xl">
@@ -676,9 +777,61 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
             </DialogContent>
         </Dialog>
 
+        {/* ── Submitting Loading Overlay ─────────────────────────────────────── */}
+        <AnimatePresence>
+          {isSubmitting && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl z-[300] flex items-center justify-center p-6 pointer-events-auto"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 200, damping: 25 }}
+                className="bg-white/10 border border-white/20 backdrop-blur-2xl rounded-[3rem] p-10 max-w-md w-full shadow-2xl flex flex-col items-center justify-center text-center space-y-6 relative overflow-hidden"
+              >
+                {/* Glowing background highlights */}
+                <div className="absolute -top-12 -left-12 w-40 h-40 bg-emerald-500/20 rounded-full blur-3xl" />
+                <div className="absolute -bottom-12 -right-12 w-40 h-40 bg-primary/20 rounded-full blur-3xl" />
+
+                <div className="relative h-24 w-24 bg-emerald-500/20 rounded-full flex items-center justify-center border-2 border-emerald-500/30">
+                  <Loader2 className="h-12 w-12 text-emerald-400 animate-spin" />
+                </div>
+
+                <div className="space-y-3 relative z-10">
+                  <h2 className="text-white text-2xl sm:text-3xl font-black tracking-tight uppercase">
+                    Submitting Exam...
+                  </h2>
+                  <p className="text-slate-300 text-xs font-bold uppercase tracking-widest leading-relaxed">
+                    Please wait while your answers are being uploaded and evaluated securely.
+                  </p>
+                </div>
+
+                <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden border border-white/10 relative">
+                  <motion.div 
+                    className="h-full bg-gradient-to-r from-emerald-500 via-emerald-400 to-primary"
+                    initial={{ width: "10%" }}
+                    animate={{ width: "90%" }}
+                    transition={{ duration: 3, ease: "easeInOut", repeat: Infinity, repeatType: "reverse" }}
+                  />
+                </div>
+
+                <div className="py-2 px-6 rounded-2xl bg-white/5 border border-white/10 flex items-center gap-3">
+                  <div className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                    Do not close or refresh this page
+                  </span>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* ── Time Up Auto-Close Overlay ─────────────────────────────────────── */}
         <AnimatePresence>
-          {isTimeOver && (
+          {isTimeOver && !isSubmitting && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
