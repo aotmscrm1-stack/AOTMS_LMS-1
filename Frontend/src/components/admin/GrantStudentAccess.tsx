@@ -100,37 +100,35 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
   const { data: courses = [], isLoading: coursesLoading } = useQuery({
     queryKey: ['approved-courses'],
     queryFn: async () => {
-      const data = await fetchWithAuth('/data/courses?status=in.(published,approved,active)&select=id,title,status,course_type');
-      return data as Course[];
+      const data = await fetchWithAuth('/data/courses?limit=200');
+      return (data as Course[]).filter(c => (c as any).is_active !== false);
     }
   });
 
-  // Filter students: only un-enrolled students, matching search + course_type tab
+  // Filter students: matching role + search query + course_type tab
   const filteredStudents = profiles.filter(profile => {
-    const r = profile.role?.toLowerCase();
-    if (r !== 'student' && r !== 'intern') return false;
-    if (enrollments.some(e => e.user_id === profile.id)) return false;
+    const r = profile.role?.toLowerCase() || 'student';
+    if (r !== 'student' && r !== 'intern' && r !== 'user') return false;
     if (courseTypeFilter !== 'all' && (profile as any).course_type !== courseTypeFilter) return false;
     const q = searchQuery.toLowerCase();
     return (
+      !q ||
       profile.full_name?.toLowerCase().includes(q) ||
-      profile.email?.toLowerCase().includes(q)
+      profile.email?.toLowerCase().includes(q) ||
+      ((profile as any).college_name || '').toLowerCase().includes(q)
     );
   });
 
-  // Courses available for the selected student — filtered to match their course_type
+  // Courses available for the selected student — show ALL available courses (CRT, Full-Time, Internship, etc.)
   const availableCourses = courses.filter(course => {
     if (selectedStudent) {
-      // Only show courses that match the student's chosen course type
-      const studentType = (selectedStudent as any).course_type || 'full_time';
-      if (course.course_type !== studentType) return false;
-      // Exclude courses already actively enrolled
+      // Exclude courses that the student is already actively enrolled in
       if (enrollments.some(e => e.user_id === selectedStudent.id && e.course_id === course.id && e.status === 'active')) return false;
     }
     return true;
   });
 
-  // Courses matching the dialog filter (for the Select dropdown label)
+  // Courses matching the dialog filter (for visual meta)
   const studentCourseType = (selectedStudent as any)?.course_type || 'full_time';
   const courseTypeMeta = COURSE_TYPE_META[studentCourseType] ?? COURSE_TYPE_META.full_time;
 
@@ -317,24 +315,24 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                 {selectedStudent && (
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase text-slate-500 flex items-center gap-1.5">
-                      <courseTypeMeta.icon className="h-3.5 w-3.5" />
-                      {courseTypeMeta.label} Courses
+                      <BookOpen className="h-3.5 w-3.5 text-primary" />
+                      Select Course to Grant Access
                     </Label>
                     {coursesLoading ? (
                       <div className="flex items-center gap-2 text-muted-foreground bg-slate-50 p-3 rounded-xl border border-slate-200">
                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                        <span className="text-sm">Loading courses...</span>
+                        <span className="text-sm">Loading available courses...</span>
                       </div>
                     ) : availableCourses.length === 0 ? (
-                      <div className="flex items-center gap-2 text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200 text-sm">
-                        No {courseTypeMeta.label.toLowerCase()} courses available for this student.
+                      <div className="flex items-center gap-2 text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200 text-sm font-medium">
+                        Student is already enrolled in all available courses.
                       </div>
                     ) : (
                       <Select value={selectedCourse?.id || ''} onValueChange={handleCourseSelect}>
                         <SelectTrigger className="h-12 rounded-xl bg-background border-slate-200">
                           <div className="flex items-center gap-2">
                             <BookOpen className="h-4 w-4 text-muted-foreground" />
-                            <SelectValue placeholder={`Select a ${courseTypeMeta.label.toLowerCase()} course...`} />
+                            <SelectValue placeholder="Select a course (CRT Classes, Full-Time, Internship...)" />
                           </div>
                         </SelectTrigger>
                         <SelectContent>
