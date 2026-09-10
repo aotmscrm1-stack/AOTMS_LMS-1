@@ -637,7 +637,7 @@ export function UserManagement({
                             setEditFullName(user.full_name || "");
                             setEditCollegeName((user as any).college_name || "");
                             setEditInstituteName((user as any).institute_name || "");
-                            setEditMobileNumber((user as any).mobile_number || user.phone || "");
+                            setEditMobileNumber((user as any).mobile_number || (user as any).phone || "");
                             setEditCourseType((user as any).course_type || "full_time");
                             setShowEditProfileDialog(true);
                           }} className="rounded-xl font-bold text-[13px] py-2.5 cursor-pointer hover:bg-slate-50 text-slate-700">
