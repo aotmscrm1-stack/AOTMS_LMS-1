@@ -8438,13 +8438,12 @@ app.get('/api/student/my-batch/:courseId', authenticateToken, async (req, res) =
 app.get('/api/public/courses', async (req, res) => {
     try {
         const query = {
-            status: { $in: ['published', 'approved'] },
             is_active: { $ne: false }
         };
         if (req.query.category && req.query.category.toLowerCase() !== 'all') {
             query.category = req.query.category;
         }
-        const courses = await Course.find(query).limit(50);
+        const courses = await Course.find(query).sort({ created_at: -1 }).limit(100);
         res.json(courses);
     } catch (err) {
         handleError(res, err, 'public-courses');
