@@ -2025,6 +2025,49 @@ app.put('/api/admin/update-user-status', authenticateToken, requireAdmin, async 
     }
 });
 
+app.put('/api/admin/update-user-profile', authenticateToken, requireAdminOrManager, async (req, res) => {
+    const { userId, full_name, college_name, institute_name, mobile_number, course_type } = req.body;
+    if (!userId) return res.status(400).json({ error: 'Missing userId' });
+
+    try {
+        const userObjId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : null;
+        
+        // Update User model
+        const userUpdate = {};
+        if (full_name !== undefined) userUpdate.full_name = full_name;
+        if (mobile_number !== undefined) userUpdate.phone = mobile_number;
+        
+        if (Object.keys(userUpdate).length > 0) {
+            await User.updateOne(
+                { $or: [{ _id: userId }, { _id: userObjId }].filter(Boolean) },
+                { $set: userUpdate }
+            );
+        }
+
+        // Update Profile model
+        const profileUpdate = { updated_at: new Date() };
+        if (full_name !== undefined) profileUpdate.full_name = full_name;
+        if (college_name !== undefined) profileUpdate.college_name = college_name;
+        if (institute_name !== undefined) profileUpdate.institute_name = institute_name;
+        if (mobile_number !== undefined) profileUpdate.mobile_number = mobile_number;
+        if (course_type !== undefined) profileUpdate.course_type = course_type;
+
+        const updatedProfile = await Profile.findOneAndUpdate(
+            { $or: [{ user_id: userId }, { user_id: userObjId }].filter(Boolean) },
+            { $set: profileUpdate },
+            { new: true, upsert: true }
+        );
+
+        res.json({
+            success: true,
+            message: 'User profile updated successfully',
+            profile: updatedProfile
+        });
+    } catch (err) {
+        handleError(res, err, 'update-user-profile');
+    }
+});
+
 app.post('/api/admin/send-approval-email', authenticateToken, requireAdmin, async (req, res) => {
     const { userId } = req.body;
     try {

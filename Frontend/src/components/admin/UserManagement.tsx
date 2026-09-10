@@ -163,6 +163,40 @@ export function UserManagement({
   const [showSuspendDialog, setShowSuspendDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [suspensionDays, setSuspensionDays] = useState("7");
+
+  // Edit Profile States
+  const [showEditProfileDialog, setShowEditProfileDialog] = useState(false);
+  const [editFullName, setEditFullName] = useState("");
+  const [editCollegeName, setEditCollegeName] = useState("");
+  const [editInstituteName, setEditInstituteName] = useState("");
+  const [editMobileNumber, setEditMobileNumber] = useState("");
+  const [editCourseType, setEditCourseType] = useState("full_time");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  const handleSaveProfileDetails = async () => {
+    if (!selectedUser) return;
+    setIsSavingProfile(true);
+    try {
+      await fetchWithAuth('/admin/update-user-profile', {
+        method: 'PUT',
+        body: JSON.stringify({
+          userId: selectedUser.id,
+          full_name: editFullName,
+          college_name: editCollegeName,
+          institute_name: editInstituteName,
+          mobile_number: editMobileNumber,
+          course_type: editCourseType,
+        }),
+      });
+      toast.success('User profile & college details updated successfully!');
+      setShowEditProfileDialog(false);
+      if (onSync) onSync();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update user profile details');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
   
   interface PendingEnrollment {
     id: string;
@@ -600,6 +634,17 @@ export function UserManagement({
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => {
                             setSelectedUser(user);
+                            setEditFullName(user.full_name || "");
+                            setEditCollegeName((user as any).college_name || "");
+                            setEditInstituteName((user as any).institute_name || "");
+                            setEditMobileNumber((user as any).mobile_number || user.phone || "");
+                            setEditCourseType((user as any).course_type || "full_time");
+                            setShowEditProfileDialog(true);
+                          }} className="rounded-xl font-bold text-[13px] py-2.5 cursor-pointer hover:bg-slate-50 text-slate-700">
+                            <Edit className="mr-3 h-4 w-4 text-indigo-500" /> Edit Profile & College
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            setSelectedUser(user);
                             setNewRole(user.role || "student");
                             setShowRoleDialog(true);
                           }} className="rounded-xl font-bold text-[13px] py-2.5 cursor-pointer hover:bg-slate-50">
@@ -762,6 +807,103 @@ export function UserManagement({
               onClick={handleRoleChange}
             >
               Update Role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Profile Dialog */}
+      <Dialog open={showEditProfileDialog} onOpenChange={setShowEditProfileDialog}>
+        <DialogContent aria-describedby="edit-profile-dialog-description" className="max-w-lg overflow-hidden bg-white/95 backdrop-blur-2xl border border-slate-200/60 shadow-2xl rounded-3xl p-0">
+          <DialogHeader className="px-6 py-5 border-b border-slate-100 bg-slate-50/50">
+            <DialogTitle className="flex items-center gap-3 text-lg font-bold text-slate-800">
+              <div className="h-10 w-10 rounded-xl bg-indigo-50 flex items-center justify-center shadow-inner">
+                <Edit className="h-5 w-5 text-indigo-600" />
+              </div>
+              Edit Profile & College Details
+            </DialogTitle>
+            <DialogDescription id="edit-profile-dialog-description" className="text-sm text-slate-500 font-medium sm:ml-13">
+              Update credentials and registration info for <span className="text-slate-900 font-bold">{selectedUser?.full_name || selectedUser?.email}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Full Name</label>
+              <Input
+                value={editFullName}
+                onChange={(e) => setEditFullName(e.target.value)}
+                placeholder="Student Full Name"
+                className="h-11 rounded-xl font-bold text-slate-800"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase text-indigo-600 tracking-wider flex items-center gap-1">
+                <GraduationCap className="h-3.5 w-3.5 text-indigo-500" /> College Name
+              </label>
+              <Input
+                value={editCollegeName}
+                onChange={(e) => setEditCollegeName(e.target.value)}
+                placeholder="e.g. ABC College of Engineering"
+                className="h-11 rounded-xl font-bold text-slate-800 border-indigo-200 bg-indigo-50/20 focus:border-indigo-500 focus:ring-indigo-500/20"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Institute Name (Branch / Department)</label>
+              <Input
+                value={editInstituteName}
+                onChange={(e) => setEditInstituteName(e.target.value)}
+                placeholder="e.g. Computer Science Engineering"
+                className="h-11 rounded-xl font-medium text-slate-800"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Mobile Number</label>
+                <Input
+                  value={editMobileNumber}
+                  onChange={(e) => setEditMobileNumber(e.target.value)}
+                  placeholder="+91 9876543210"
+                  className="h-11 rounded-xl font-medium text-slate-800"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Course Programme</label>
+                <Select value={editCourseType} onValueChange={setEditCourseType}>
+                  <SelectTrigger className="h-11 rounded-xl font-bold text-slate-800 border-slate-200">
+                    <SelectValue placeholder="Course Type" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl border-slate-200 shadow-xl">
+                    <SelectItem value="full_time" className="font-bold text-xs">Full-Time Student</SelectItem>
+                    <SelectItem value="internship" className="font-bold text-xs">Internship Student</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex gap-3">
+            <Button
+              variant="ghost"
+              className="rounded-xl font-semibold text-slate-600 hover:bg-slate-200/50 h-11 px-6"
+              onClick={() => setShowEditProfileDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={isSavingProfile}
+              onClick={handleSaveProfileDetails}
+              className="rounded-xl font-bold bg-primary text-white shadow-lg shadow-primary/20 h-11 px-8 gap-2"
+            >
+              {isSavingProfile ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</>
+              ) : (
+                'Save Changes'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
