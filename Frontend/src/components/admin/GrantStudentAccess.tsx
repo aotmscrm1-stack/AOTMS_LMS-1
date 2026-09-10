@@ -47,7 +47,7 @@ interface GrantStudentAccessProps {
 }
 
 // Map course_type value → human label + visual style
-const COURSE_TYPE_META: Record<string, { label: string; icon: React.ElementType; badgeClass: string; filterLabel: string }> = {
+const COURSE_TYPE_META: Record<string, { label: string; icon: any; badgeClass: string; filterLabel: string }> = {
   full_time:  { label: 'Full-Time',   icon: GraduationCap, badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',   filterLabel: 'Full-Time Students'   },
   internship: { label: 'Internship',  icon: Briefcase,     badgeClass: 'bg-amber-50 text-amber-700 border-amber-200', filterLabel: 'Internship Students'  },
 };
