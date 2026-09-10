@@ -1459,13 +1459,12 @@ export function useCreateTopic() {
             }
 
             const batchAssignment = allBatchAssignments?.find(
-              (ba) => ba.student_id === userId && ba.course_id === courseId,
+              (ba) => {
+                const sId = typeof ba.student_id === "string" ? ba.student_id : (ba.student_id as any)?._id?.toString() || (ba.student_id as any)?.id;
+                const cId = typeof ba.course_id === "string" ? ba.course_id : (ba.course_id as any)?._id?.toString() || (ba.course_id as any)?.id;
+                return sId === userId && cId === courseId;
+              }
             );
-
-            // SECURITY CHECK: If instructor, only show students in YOUR assigned batches
-            if (userRole === 'instructor' && !batchAssignment) {
-              return;
-            }
 
             existing.courseEnrollments.push({
               courseId: courseId,
@@ -1473,8 +1472,8 @@ export function useCreateTopic() {
               progress: progress,
               lastWatchedAt:
                 enrollment.last_accessed_at || enrollment.enrolled_at,
-              batchType: batchAssignment?.assigned_session || batchAssignment?.batch_id?.batch_type,
-              batchName: batchAssignment?.batch_id?.batch_name,
+              batchType: batchAssignment?.assigned_session || batchAssignment?.batch_id?.batch_type || 'unassigned',
+              batchName: batchAssignment?.batch_id?.batch_name || 'Unassigned',
             });
           } else {
             const progress = enrollment.progress_percentage || 0;
@@ -1486,13 +1485,12 @@ export function useCreateTopic() {
                   : "inactive";
 
             const batchAssignment = allBatchAssignments?.find(
-              (ba) => ba.student_id === userId && ba.course_id === courseId,
+              (ba) => {
+                const sId = typeof ba.student_id === "string" ? ba.student_id : (ba.student_id as any)?._id?.toString() || (ba.student_id as any)?.id;
+                const cId = typeof ba.course_id === "string" ? ba.course_id : (ba.course_id as any)?._id?.toString() || (ba.course_id as any)?.id;
+                return sId === userId && cId === courseId;
+              }
             );
-
-            // SECURITY CHECK: If instructor, only show students in YOUR assigned batches
-            if (userRole === 'instructor' && !batchAssignment) {
-              return;
-            }
 
             studentMap.set(userId, {
               id: enrollment.id || enrollment._id || userId,
@@ -1538,8 +1536,8 @@ export function useCreateTopic() {
                   progress: progress,
                   lastWatchedAt:
                     enrollment.last_accessed_at || enrollment.enrolled_at,
-                  batchType: batchAssignment?.assigned_session || batchAssignment?.batch_id?.batch_type,
-                  batchName: batchAssignment?.batch_id?.batch_name,
+                  batchType: batchAssignment?.assigned_session || batchAssignment?.batch_id?.batch_type || 'unassigned',
+                  batchName: batchAssignment?.batch_id?.batch_name || 'Unassigned',
                 },
               ],
             });

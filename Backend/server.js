@@ -3929,10 +3929,22 @@ app.post('/api/instructor/choose-course', authenticateToken, requireInstructor, 
 app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (req, res) => {
     try {
         const { all } = req.query;
+        const userIdStr = req.user.id ? req.user.id.toString() : '';
+        const userIdObj = mongoose.Types.ObjectId.isValid(userIdStr) ? new mongoose.Types.ObjectId(userIdStr) : null;
+        const userMatchIds = [userIdStr, userIdObj].filter(Boolean);
+
+        // Find courses where instructor has a batch assigned
+        const myBatchDocs = await Batch.find({ instructor_id: { $in: userMatchIds } }).select('course_id').lean();
+        const batchCourseIds = myBatchDocs.map(b => b.course_id).filter(Boolean);
+        const batchCourseIdStrs = batchCourseIds.map(id => id.toString());
+        const batchCourseIdObjs = batchCourseIdStrs.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
+        const allBatchCourseMatchIds = [...new Set([...batchCourseIdStrs, ...batchCourseIdObjs])];
+
         let query = {
             $or: [
-                { instructor_id: req.user.id },
-                { instructor_ids: req.user.id }
+                { instructor_id: { $in: userMatchIds } },
+                { instructor_ids: { $in: userMatchIds } },
+                { _id: { $in: allBatchCourseMatchIds } }
             ]
         };
 
@@ -3942,24 +3954,27 @@ app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (
 
         const courses = await Course.find(query).sort({ updated_at: -1 }).lean();
         const courseIds = courses.map(c => c._id);
+        const courseIdStrs = courseIds.map(id => id.toString());
+        const courseIdObjs = courseIdStrs.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
+        const allCourseMatchIds = [...new Set([...courseIdStrs, ...courseIdObjs])];
 
         // Fetch ALL batches to see locks
         const allBatches = await Batch.find({
-            course_id: { $in: courseIds },
+            course_id: { $in: allCourseMatchIds },
             status: { $in: ['pending', 'approved'] }
         }).select('course_id batch_type').lean();
 
         // Fetch SPECIFIC batches for this instructor to see THEIR assignment
         const myBatches = await Batch.find({
-            course_id: { $in: courseIds },
-            instructor_id: req.user.id
+            course_id: { $in: allCourseMatchIds },
+            instructor_id: { $in: userMatchIds }
         }).lean();
 
         // Map data
         const data = courses.map(course => {
             const courseIdStr = course._id.toString();
-            const locks = allBatches.filter(b => b.course_id.toString() === courseIdStr);
-            const myMatch = myBatches.find(b => b.course_id.toString() === courseIdStr);
+            const locks = allBatches.filter(b => b.course_id?.toString() === courseIdStr);
+            const myMatch = myBatches.find(b => b.course_id?.toString() === courseIdStr);
 
             const occupiedSessions = [...new Set(locks.map(b => b.batch_type))];
 
@@ -3968,7 +3983,7 @@ app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (
                 id: course._id,
                 occupied_sessions: occupiedSessions,
                 assigned_session: myMatch?.batch_type, // 'morning', 'afternoon', etc.
-                is_approved: myMatch?.status === 'approved'
+                is_approved: myMatch ? (myMatch.status === 'approved') : true
             };
         });
 
@@ -6339,45 +6354,34 @@ createCourseResourceRoutes('resources', Resource);
 
 app.get('/api/courses/:courseId/roster', authenticateToken, requireInstructor, async (req, res) => {
     try {
-        const role = await getUserRole(req.user.id);
-        let enrollmentQuery = { course_id: req.params.courseId };
+        const courseIdStr = req.params.courseId;
+        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
+        const courseMatchIds = [courseIdStr, courseIdObj].filter(Boolean);
 
-        // SECURITY: If instructor, first find WHICH students are in THEIR batches
-        if (role === 'instructor') {
-            const myBatches = await Batch.find({
-                course_id: req.params.courseId,
-                instructor_id: req.user.id
-            }).select('_id').lean();
-
-            const myBatchIds = myBatches.map(b => b._id);
-            const myStudentAssignments = await StudentBatch.find({
-                batch_id: { $in: myBatchIds }
-            }).select('student_id').lean();
-
-            const myStudentIds = myStudentAssignments.map(a => a.student_id);
-            enrollmentQuery.user_id = { $in: myStudentIds };
-        }
-
-        const enrollments = await Enrollment.find(enrollmentQuery)
+        const enrollments = await Enrollment.find({ course_id: { $in: courseMatchIds } })
             .populate('user_id', 'full_name email phone avatar_url')
             .lean();
 
-        // Fetch profiles separately if needed, or join if possible. 
-        // For now, let's just get the basic user info and use the Profile model if mobile_number is there.
-        const userIds = enrollments.map(e => e.user_id?._id).filter(id => id);
+        const userIds = enrollments.map(e => {
+            const u = e.user_id;
+            return typeof u === 'object' && u ? (u._id?.toString() || u.id?.toString()) : u?.toString();
+        }).filter(Boolean);
+
+        const userIdObjs = userIds.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
+        const allUserMatchIds = [...new Set([...userIds, ...userIdObjs])];
 
         const [profiles, batchAssignments] = await Promise.all([
-            Profile.find({ user_id: { $in: userIds } }).lean(),
-            StudentBatch.find({ course_id: req.params.courseId, student_id: { $in: userIds } }).populate('batch_id').lean()
+            Profile.find({ user_id: { $in: allUserMatchIds } }).lean(),
+            StudentBatch.find({ course_id: { $in: courseMatchIds }, student_id: { $in: allUserMatchIds } }).populate('batch_id').lean()
         ]);
 
         const profileMap = profiles.reduce((acc, p) => {
-            acc[p.user_id.toString()] = p;
+            if (p.user_id) acc[p.user_id.toString()] = p;
             return acc;
         }, {});
 
         const batchMap = batchAssignments.reduce((acc, sb) => {
-            acc[sb.student_id.toString()] = sb.batch_id;
+            if (sb.student_id) acc[sb.student_id.toString()] = sb.batch_id;
             return acc;
         }, {});
 
@@ -6386,17 +6390,18 @@ app.get('/api/courses/:courseId/roster', authenticateToken, requireInstructor, a
         const seenUserIds = new Set();
 
         enrollments.forEach(e => {
-            const userIdStr = e.user_id?._id?.toString();
+            const userObj = typeof e.user_id === 'object' && e.user_id ? e.user_id : {};
+            const userIdStr = userObj._id ? userObj._id.toString() : (e.user_id ? e.user_id.toString() : '');
             if (!userIdStr || seenUserIds.has(userIdStr)) return;
             seenUserIds.add(userIdStr);
             const profile = profileMap[userIdStr] || null;
 
             uniqueRoster.push({
-                id: e.user_id?._id,
-                full_name: e.user_id?.full_name || profile?.full_name || 'Unknown Student',
-                email: e.user_id?.email || profile?.email || '',
-                mobile_number: profile?.mobile_number || e.user_id?.phone || '',
-                avatar_url: e.user_id?.avatar_url || profile?.avatar_url || null,
+                id: userIdStr,
+                full_name: profile?.full_name || userObj.full_name || 'Enrolled Student',
+                email: profile?.email || userObj.email || '',
+                mobile_number: profile?.mobile_number || profile?.phone || userObj.phone || '',
+                avatar_url: profile?.avatar_url || userObj.avatar_url || null,
                 role: 'student',
                 batch: batchMap[userIdStr] || null,
                 status: e.status,
@@ -6635,19 +6640,17 @@ app.get('/api/data/:table', authenticateToken, async (req, res) => {
         let limit = 100;
         let skip = 0;
 
-        // Utility to convert hex strings to ObjectId if they look like one
-        const tryConvertId = (val) => {
-            if (typeof val === 'string' && val.length === 24 && /^[0-9a-fA-F]{24}$/.test(val)) {
+        // Utility to expand hex strings into both String and ObjectId for dual matching
+        const expandId = (val) => {
+            const strVal = val ? val.toString().trim() : '';
+            if (typeof strVal === 'string' && strVal.length === 24 && /^[0-9a-fA-F]{24}$/.test(strVal)) {
                 try {
-                    // Only convert if it's explicitly used for an ID field like _id, student_id, etc.
-                    // For generic queries, we'll try to convert but catch any potential issues.
-                    return new mongoose.Types.ObjectId(val);
+                    return [strVal, new mongoose.Types.ObjectId(strVal)];
                 } catch (e) {
-                    console.warn(`[tryConvertId] Failed to convert ${val}:`, e.message);
-                    return val;
+                    return [strVal];
                 }
             }
-            return val;
+            return [strVal];
         };
 
         // Filter Logic
@@ -6657,16 +6660,20 @@ app.get('/api/data/:table', authenticateToken, async (req, res) => {
             const filterKey = key === 'id' ? '_id' : key;
             const valStr = value.toString();
             if (valStr.startsWith('eq.')) {
-                query[filterKey] = tryConvertId(valStr.slice(3));
+                const rawVal = valStr.slice(3);
+                const expanded = expandId(rawVal);
+                query[filterKey] = expanded.length > 1 ? { $in: expanded } : expanded[0];
             } else if (valStr.startsWith('in.')) {
                 const ids = valStr.slice(4, -1).split(',');
-                query[filterKey] = { $in: ids.map(id => tryConvertId(id.trim())) };
+                const expandedIds = ids.flatMap(id => expandId(id));
+                query[filterKey] = { $in: expandedIds };
             } else if (valStr.startsWith('lt.')) {
                 query[filterKey] = { $lt: valStr.slice(3) };
             } else if (valStr.startsWith('gt.')) {
                 query[filterKey] = { $gt: valStr.slice(3) };
             } else {
-                query[filterKey] = tryConvertId(valStr); // Default exact match
+                const expanded = expandId(valStr);
+                query[filterKey] = expanded.length > 1 ? { $in: expanded } : expanded[0];
             }
         }
 
@@ -7744,28 +7751,36 @@ app.get('/api/batches/my-batch/:courseId', authenticateToken, async (req, res) =
 // Get full course roster for instructors, grouped by batch type
 app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstructor, async (req, res) => {
     try {
-        // Convert courseId to ObjectId for proper MongoDB query
-        const courseId = new mongoose.Types.ObjectId(req.params.courseId);
+        const courseIdStr = req.params.courseId;
+        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
+        const courseMatchIds = [courseIdStr, courseIdObj].filter(Boolean);
 
         // Get all course enrollments (students) regardless of status
         const enrollments = await Enrollment.find({
-            course_id: courseId
+            course_id: { $in: courseMatchIds }
         }).lean();
 
-        const studentIds = enrollments.map(e => e.user_id).filter(id => id);
+        const rawStudentIds = enrollments.map(e => e.user_id?.toString() || e.student_id?.toString()).filter(Boolean);
+        const studentIdObjs = rawStudentIds.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
+        const studentIdStrs = rawStudentIds.map(id => id.toString());
+        const allStudentMatchIds = [...new Set([...studentIdStrs, ...studentIdObjs])];
 
         // --- SECURITY: Filter assignments by instructor if requested by instructor ---
         const userRole = await getUserRole(req.user.id);
         let assignmentQuery = {
-            course_id: courseId,
-            student_id: { $in: studentIds }
+            course_id: { $in: courseMatchIds },
+            student_id: { $in: allStudentMatchIds }
         };
 
         // Fetch ALL assignments first, then filter instructor's own batches separately
         const allAssignments = await StudentBatch.find(assignmentQuery).populate('batch_id').lean();
 
         // Get instructor's batch IDs for permission checking
-        const myBatches = await Batch.find({ instructor_id: req.user.id }).select('_id').lean();
+        const userIdStr = req.user.id.toString();
+        const userIdObj = mongoose.Types.ObjectId.isValid(userIdStr) ? new mongoose.Types.ObjectId(userIdStr) : null;
+        const userMatchIds = [userIdStr, userIdObj].filter(Boolean);
+
+        const myBatches = await Batch.find({ instructor_id: { $in: userMatchIds } }).select('_id').lean();
         const myBatchIds = new Set(myBatches.map(b => b._id.toString()));
 
         // Map assignments with batch ownership flag
@@ -7775,8 +7790,8 @@ app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstru
         }));
 
         // Get profiles and roles
-        const profiles = await Profile.find({ user_id: { $in: studentIds } }).lean();
-        const users = await User.find({ _id: { $in: studentIds } }).select('full_name email role avatar_url').lean();
+        const profiles = await Profile.find({ user_id: { $in: allStudentMatchIds } }).lean();
+        const users = await User.find({ _id: { $in: studentIdObjs } }).select('full_name email role avatar_url').lean();
 
         const profileMap = profiles.reduce((acc, p) => {
             if (p.user_id) acc[p.user_id.toString()] = p;
@@ -7788,19 +7803,21 @@ app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstru
             return acc;
         }, {});
 
-        const roles = await UserRole.find({ user_id: { $in: studentIds } }).lean();
-        const roleMap = roles.reduce((acc, r) => { acc[r.user_id?.toString()] = r.role; return acc; }, {});
+        const roles = await UserRole.find({ user_id: { $in: allStudentMatchIds } }).lean();
+        const roleMap = roles.reduce((acc, r) => { if (r.user_id) acc[r.user_id.toString()] = r.role; return acc; }, {});
 
         const assignmentMap = assignments.reduce((acc, a) => {
-            acc[a.student_id?.toString()] = {
-                batch: a.batch_id,
-                session: a.assigned_session
-            };
+            if (a.student_id) {
+                acc[a.student_id.toString()] = {
+                    batch: a.batch_id,
+                    session: a.assigned_session
+                };
+            }
             return acc;
         }, {});
 
         const rosterData = enrollments.map(e => {
-            const uid = e.user_id ? e.user_id.toString() : null;
+            const uid = e.user_id ? e.user_id.toString() : (e.student_id ? e.student_id.toString() : null);
             if (!uid) return null;
 
             const user = userMap[uid];
