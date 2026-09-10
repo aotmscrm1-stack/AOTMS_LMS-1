@@ -405,7 +405,7 @@ function buildPDF(profile: StudentProfile, detail: StudentDetail): string {
 function Sec({
   icon: I, title, color, count, children, empty,
 }: {
-  icon: React.ElementType; title: string;
+  icon: React.ComponentType<{ className?: string }> | any; title: string;
   color: string; count?: number;
   children?: React.ReactNode; empty: string;
 }) {
@@ -829,7 +829,7 @@ export function StudentPerformance({
                                         interface IdentityItem {
                                           l: string;
                                           v: string | null | undefined;
-                                          icon: React.ElementType;
+                                          icon: React.ComponentType<{ className?: string }> | any;
                                           mono?: boolean;
                                         }
                                         const items: IdentityItem[] = [
