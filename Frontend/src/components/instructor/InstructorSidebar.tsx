@@ -31,6 +31,7 @@ import {
   MessageSquare,
   Bell,
   CheckCircle2,
+  Award,
 } from "lucide-react";
 
 import logo from "@/assets/logo.png";
@@ -85,6 +86,7 @@ const navGroups: NavGroup[] = [
       { title: "Queation Bank", url: "/instructor/question-bank", icon: FileQuestion },
       { title: "Queation Access", url: "/instructor/question-access", icon: CheckCircle2 },
       { title: "Manual Grading", url: "/instructor/grading", icon: BarChart3 },
+      { title: "Student Results", url: "/instructor/results", icon: Award },
       { title: "Course Resourses", url: "/instructor/test-resources", icon: FolderOpen },
     ],
   },

@@ -6416,6 +6416,218 @@ app.post('/api/instructor/grade-result/:resultId', authenticateToken, requireIns
     }
 });
 
+// 2b. Get All Student Mock Paper / Exam Results (Instructor & Admin)
+app.get('/api/instructor/student-results', authenticateToken, async (req, res) => {
+    try {
+        const userRole = await getUserRole(req.user.id);
+        if (!['admin', 'manager', 'instructor'].includes(userRole)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const { course_id, search, status } = req.query;
+
+        // 1. Determine allowed course IDs and titles
+        let allowedCourseIds = [];
+        let allowedCourseTitles = [];
+
+        if (userRole === 'instructor') {
+            const instructorCourses = await Course.find({
+                $or: [
+                    { instructor_id: req.user.id },
+                    { instructor_ids: req.user.id }
+                ]
+            }).select('_id title').lean();
+
+            allowedCourseIds = instructorCourses.map(c => c._id);
+            allowedCourseTitles = instructorCourses.map(c => c.title);
+
+            // Also include courses from instructor's assigned batches
+            const instructorBatches = await Batch.find({ instructor_id: req.user.id }).select('course_id').lean();
+            for (const b of instructorBatches) {
+                if (b.course_id && !allowedCourseIds.some(id => id.toString() === b.course_id.toString())) {
+                    allowedCourseIds.push(b.course_id);
+                    const c = await Course.findById(b.course_id).select('title').lean();
+                    if (c?.title) allowedCourseTitles.push(c.title);
+                }
+            }
+        } else {
+            // Admin or manager can access all courses
+            const allCourses = await Course.find().select('_id title').lean();
+            allowedCourseIds = allCourses.map(c => c._id);
+            allowedCourseTitles = allCourses.map(c => c.title);
+        }
+
+        // 2. Build query
+        let query = {};
+
+        if (course_id && course_id !== 'all') {
+            const targetCourse = await Course.findById(course_id).select('title _id').lean();
+            const targetCourseTitle = targetCourse ? targetCourse.title : '';
+
+            // Find exams associated with this course
+            const courseExams = await Exam.find({ course_id }).select('_id').lean();
+            const examIds = courseExams.map(e => e._id);
+
+            const orConditions = [
+                { course_id: course_id },
+                { exam_id: { $in: examIds } },
+                { mock_paper_id: { $in: examIds } }
+            ];
+
+            if (targetCourseTitle) {
+                orConditions.push({ test_title: { $regex: new RegExp(`^${targetCourseTitle}$`, 'i') } });
+                orConditions.push({ test_title: { $regex: new RegExp(targetCourseTitle, 'i') } });
+            }
+
+            query['$or'] = orConditions;
+        } else if (userRole === 'instructor') {
+            const exams = await Exam.find({ course_id: { $in: allowedCourseIds } }).select('_id').lean();
+            const examIds = exams.map(e => e._id);
+
+            query['$or'] = [
+                { course_id: { $in: allowedCourseIds } },
+                { exam_id: { $in: examIds } },
+                { mock_paper_id: { $in: examIds } },
+                { test_title: { $in: allowedCourseTitles } }
+            ];
+        }
+
+        // 3. Fetch results
+        let examResults = await ExamResult.find(query)
+            .populate('student_id', 'full_name email avatar_url phone')
+            .populate('exam_id', 'title exam_type duration_minutes total_marks passing_marks course_id')
+            .populate('mock_paper_id', 'title')
+            .populate('course_id', 'title category')
+            .sort({ submitted_at: -1 })
+            .lean();
+
+        // Filter out records where student no longer exists
+        examResults = examResults.filter(r => r.student_id);
+
+        // Fetch profiles for college names
+        const studentIds = [...new Set(examResults.map(r => r.student_id?._id?.toString()).filter(Boolean))];
+        const profiles = await Profile.find({ user_id: { $in: studentIds } }).select('user_id college_name institute_name').lean();
+        const profileMap = new Map();
+        profiles.forEach(p => {
+            if (p.user_id) profileMap.set(p.user_id.toString(), p.college_name || p.institute_name || '');
+        });
+
+        // Fetch student batches
+        const studentBatches = await StudentBatch.find({ student_id: { $in: studentIds } })
+            .populate('batch_id', 'batch_name batch_type')
+            .lean();
+        const batchMap = new Map();
+        studentBatches.forEach(sb => {
+            if (sb.student_id && sb.course_id && sb.batch_id) {
+                const key = `${sb.student_id.toString()}_${sb.course_id.toString()}`;
+                batchMap.set(key, sb.batch_id);
+            }
+        });
+
+        // Map course title fallbacks
+        const allCourseDocs = await Course.find().select('_id title').lean();
+        const courseTitleMap = new Map();
+        allCourseDocs.forEach(c => courseTitleMap.set(c._id.toString(), c.title));
+
+        let formattedResults = examResults.map(r => {
+            const sId = r.student_id?._id?.toString();
+
+            // Resolve course title and id
+            let resolvedCid = r.course_id?._id?.toString() || r.exam_id?.course_id?.toString() || null;
+            let resolvedCtitle = r.course_id?.title || (resolvedCid ? courseTitleMap.get(resolvedCid) : null);
+
+            // Fallback course resolution from test title
+            if (!resolvedCtitle && r.test_title) {
+                const matched = allCourseDocs.find(c =>
+                    r.test_title.toLowerCase().includes(c.title.toLowerCase()) ||
+                    c.title.toLowerCase().includes(r.test_title.toLowerCase())
+                );
+                if (matched) {
+                    resolvedCid = matched._id.toString();
+                    resolvedCtitle = matched.title;
+                }
+            }
+            if (!resolvedCtitle) resolvedCtitle = r.test_title || 'General Assessment';
+
+            const college = sId ? profileMap.get(sId) || '' : '';
+            const batchInfo = (sId && resolvedCid) ? batchMap.get(`${sId}_${resolvedCid}`) : null;
+
+            const percentage = Math.round(r.percentage ?? ((r.score / (r.total_questions || 1)) * 100));
+            const passingMarks = r.exam_id?.passing_marks ?? Math.ceil((r.total_questions || 10) * 0.4);
+            const passed = r.exam_id?.passing_marks ? (r.score >= passingMarks) : (percentage >= 40);
+
+            return {
+                id: r._id,
+                student_id: sId,
+                student_name: r.student_id?.full_name || 'Student',
+                student_email: r.student_id?.email || '',
+                student_avatar: r.student_id?.avatar_url || '',
+                student_college: college,
+                batch_name: batchInfo?.batch_name || '',
+                batch_type: batchInfo?.batch_type || '',
+                course_id: resolvedCid,
+                course_title: resolvedCtitle,
+                test_title: r.test_title || r.exam_id?.title || r.mock_paper_id?.title || 'Mock Test',
+                exam_type: r.exam_id?.exam_type || 'mock',
+                score: r.score,
+                total_questions: r.total_questions || r.questions_snapshot?.length || 0,
+                total_marks: r.exam_id?.total_marks || r.total_questions || 0,
+                passing_marks: passingMarks,
+                percentage,
+                passed,
+                grading_status: r.grading_status || 'graded',
+                time_spent: r.time_spent || 0,
+                submitted_at: r.submitted_at,
+                questions_count: r.questions_snapshot?.length || r.total_questions || 0,
+                questions_snapshot: r.questions_snapshot || []
+            };
+        });
+
+        // Search filtering
+        if (search && search.trim()) {
+            const s = search.trim().toLowerCase();
+            formattedResults = formattedResults.filter(r =>
+                r.student_name.toLowerCase().includes(s) ||
+                r.student_email.toLowerCase().includes(s) ||
+                r.test_title.toLowerCase().includes(s) ||
+                r.course_title.toLowerCase().includes(s) ||
+                r.student_college.toLowerCase().includes(s)
+            );
+        }
+
+        // Status filtering
+        if (status === 'passed') {
+            formattedResults = formattedResults.filter(r => r.passed);
+        } else if (status === 'failed') {
+            formattedResults = formattedResults.filter(r => !r.passed);
+        } else if (status === 'pending') {
+            formattedResults = formattedResults.filter(r => r.grading_status === 'pending');
+        }
+
+        // Compute summary metrics
+        const totalSubmissions = formattedResults.length;
+        const uniqueStudents = new Set(formattedResults.map(r => r.student_id)).size;
+        const totalScorePct = formattedResults.reduce((acc, curr) => acc + (curr.percentage || 0), 0);
+        const avgPercentage = totalSubmissions > 0 ? Math.round(totalScorePct / totalSubmissions) : 0;
+        const passedCount = formattedResults.filter(r => r.passed).length;
+        const passRate = totalSubmissions > 0 ? Math.round((passedCount / totalSubmissions) * 100) : 0;
+        const topScore = totalSubmissions > 0 ? Math.max(...formattedResults.map(r => r.percentage || 0)) : 0;
+
+        res.json({
+            summary: {
+                total_submissions: totalSubmissions,
+                unique_students: uniqueStudents,
+                avg_percentage: avgPercentage,
+                pass_rate: passRate,
+                top_score: topScore
+            },
+            results: formattedResults
+        });
+    } catch (err) {
+        handleError(res, err, 'instructor-student-results');
+    }
+});
+
 // 3. Request Re-evaluation (Student Only)
 app.post('/api/student/request-reevaluation/:resultId', authenticateToken, async (req, res) => {
     try {
