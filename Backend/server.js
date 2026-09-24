@@ -2309,6 +2309,20 @@ app.put('/api/admin/update-user-profile', authenticateToken, requireAdminOrManag
             { new: true, upsert: true }
         );
 
+        // Also ensure college is registered in College collection if provided
+        if (college_name && typeof college_name === 'string' && college_name.trim()) {
+            const trimmedCollege = college_name.trim();
+            try {
+                const escaped = trimmedCollege.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const existing = await College.findOne({ name: { $regex: new RegExp(`^${escaped}$`, 'i') } });
+                if (!existing) {
+                    await College.create({ name: trimmedCollege });
+                }
+            } catch (cErr) {
+                console.error('[Admin] College auto-sync error:', cErr.message);
+            }
+        }
+
         res.json({
             success: true,
             message: 'User profile updated successfully',
@@ -2316,6 +2330,27 @@ app.put('/api/admin/update-user-profile', authenticateToken, requireAdminOrManag
         });
     } catch (err) {
         handleError(res, err, 'update-user-profile');
+    }
+});
+
+// Get comprehensive list of all colleges (from College collection and Profile collection)
+app.get('/api/admin/colleges-list', authenticateToken, requireAdminOrManager, async (req, res) => {
+    try {
+        const dbColleges = await College.find({}).select('name').lean();
+        const profileColleges = await Profile.distinct('college_name');
+
+        const set = new Set();
+        dbColleges.forEach(c => {
+            if (c.name && c.name.trim()) set.add(c.name.trim());
+        });
+        profileColleges.forEach(c => {
+            if (c && typeof c === 'string' && c.trim()) set.add(c.trim());
+        });
+
+        const sorted = Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        res.json(sorted);
+    } catch (err) {
+        handleError(res, err, 'admin-colleges-list');
     }
 });
 

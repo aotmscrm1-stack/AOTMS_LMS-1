@@ -408,6 +408,7 @@ export default function ManagerDashboard() {
             onDeleteUser={async (userId) => { return await deleteUser(userId); }}
             onUpdateEnrollmentStatus={async (id, status) => { await updateEnrollmentStatus(id, status); }}
             onResetATS={async (userId) => { await resetStudentATS(userId); }}
+            onSync={refresh}
           />
         );
 

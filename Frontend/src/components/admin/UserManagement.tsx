@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { fetchWithAuth } from "@/lib/api";
+import { COLLEGES } from "@/pages/Auth";
 import {
   Card,
   CardContent,
@@ -61,7 +62,11 @@ import {
   Zap,
   ShieldCheck,
   RefreshCw,
-  Trash2
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -173,6 +178,63 @@ export function UserManagement({
   const [editCourseType, setEditCourseType] = useState("full_time");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  // College Dropdown States
+  const [isCollegeDropdownOpen, setIsCollegeDropdownOpen] = useState(false);
+  const collegeDropdownRef = useRef<HTMLDivElement>(null);
+  const [serverColleges, setServerColleges] = useState<string[]>([]);
+
+  // Fetch registered & profile colleges from backend as well
+  useEffect(() => {
+    fetchWithAuth<string[]>('/admin/colleges-list')
+      .then(data => {
+        if (Array.isArray(data)) setServerColleges(data);
+      })
+      .catch(() => {
+        // Fallback silently if endpoint not available
+      });
+  }, []);
+
+  // Close college dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        collegeDropdownRef.current &&
+        !collegeDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsCollegeDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Combined College list: Auth.tsx COLLEGES + serverColleges + users' college_name
+  const allCollegeList = useMemo(() => {
+    const set = new Set<string>();
+    // 1. COLLEGES from Auth.tsx
+    COLLEGES.forEach(c => {
+      if (c && c.trim()) set.add(c.trim());
+    });
+    // 2. Server colleges
+    serverColleges.forEach(c => {
+      if (c && c.trim()) set.add(c.trim());
+    });
+    // 3. User profiles colleges
+    users.forEach(u => {
+      if (u.college_name && u.college_name.trim()) set.add(u.college_name.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [serverColleges, users]);
+
+  // Filtered colleges for combobox dropdown
+  const filteredColleges = useMemo(() => {
+    const term = editCollegeName.trim().toLowerCase();
+    if (!term) return allCollegeList;
+    return allCollegeList.filter(c => c.toLowerCase().includes(term));
+  }, [allCollegeList, editCollegeName]);
+
   const handleSaveProfileDetails = async () => {
     if (!selectedUser) return;
     setIsSavingProfile(true);
@@ -181,15 +243,33 @@ export function UserManagement({
         method: 'PUT',
         body: JSON.stringify({
           userId: selectedUser.id,
-          full_name: editFullName,
-          college_name: editCollegeName,
-          institute_name: editInstituteName,
-          mobile_number: editMobileNumber,
+          full_name: editFullName.trim(),
+          college_name: editCollegeName.trim(),
+          institute_name: editInstituteName.trim(),
+          mobile_number: editMobileNumber.trim(),
           course_type: editCourseType,
         }),
       });
       toast.success('User profile & college details updated successfully!');
+      
+      // Update local object immediately
+      selectedUser.full_name = editFullName.trim();
+      selectedUser.college_name = editCollegeName.trim();
+      selectedUser.institute_name = editInstituteName.trim();
+      selectedUser.mobile_number = editMobileNumber.trim();
+      selectedUser.course_type = editCourseType;
+
+      const targetUser = users.find(u => u.id === selectedUser.id);
+      if (targetUser) {
+        targetUser.full_name = editFullName.trim();
+        targetUser.college_name = editCollegeName.trim();
+        targetUser.institute_name = editInstituteName.trim();
+        targetUser.mobile_number = editMobileNumber.trim();
+        targetUser.course_type = editCourseType;
+      }
+
       setShowEditProfileDialog(false);
+      setIsCollegeDropdownOpen(false);
       if (onSync) onSync();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update user profile details');
@@ -383,9 +463,13 @@ export function UserManagement({
   };
 
   const filteredUsers = users.filter((user) => {
+    const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email?.toLowerCase().includes(searchQuery.toLowerCase());
+      !q ||
+      user.full_name?.toLowerCase().includes(q) ||
+      user.email?.toLowerCase().includes(q) ||
+      user.college_name?.toLowerCase().includes(q) ||
+      user.institute_name?.toLowerCase().includes(q);
     const matchesRole = roleFilter === "all" || user.role === roleFilter;
     return matchesSearch && matchesRole;
   });
@@ -564,9 +648,22 @@ export function UserManagement({
                         </Badge>
                       </div>
                       <p className="text-xs text-slate-500 font-bold truncate flex items-center gap-2">
-                        <Mail className="h-3 w-3 opacity-40" />
-                        {user.email}
+                        <Mail className="h-3 w-3 opacity-40 shrink-0" />
+                        <span className="truncate">{user.email}</span>
                       </p>
+
+                      {/* ── User College (Small Size) ── */}
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-600 font-medium truncate pt-0.5" title={user.college_name || "No College Assigned"}>
+                        <GraduationCap className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                        <span className="truncate">
+                          {user.college_name && user.college_name.trim() ? (
+                            <span className="font-semibold text-slate-700">{user.college_name.trim()}</span>
+                          ) : (
+                            <span className="text-slate-400 italic font-normal text-[10px]">No College Assigned</span>
+                          )}
+                        </span>
+                      </div>
+
                       <div className="flex items-center gap-2 pt-1">
                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100/50">
                            {formatLastActive(user.last_active_at)}
@@ -635,10 +732,11 @@ export function UserManagement({
                           <DropdownMenuItem onClick={() => {
                             setSelectedUser(user);
                             setEditFullName(user.full_name || "");
-                            setEditCollegeName((user as any).college_name || "");
-                            setEditInstituteName((user as any).institute_name || "");
-                            setEditMobileNumber((user as any).mobile_number || (user as any).phone || "");
-                            setEditCourseType((user as any).course_type || "full_time");
+                            setEditCollegeName((user.college_name || (user as any).college_name || "").trim());
+                            setEditInstituteName((user.institute_name || (user as any).institute_name || "").trim());
+                            setEditMobileNumber((user.mobile_number || (user as any).phone || "").trim());
+                            setEditCourseType((user.course_type || (user as any).course_type || "full_time"));
+                            setIsCollegeDropdownOpen(false);
                             setShowEditProfileDialog(true);
                           }} className="rounded-xl font-bold text-[13px] py-2.5 cursor-pointer hover:bg-slate-50 text-slate-700">
                             <Edit className="mr-3 h-4 w-4 text-indigo-500" /> Edit Profile & College
@@ -838,16 +936,144 @@ export function UserManagement({
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black uppercase text-indigo-600 tracking-wider flex items-center gap-1">
-                <GraduationCap className="h-3.5 w-3.5 text-indigo-500" /> College Name
-              </label>
-              <Input
-                value={editCollegeName}
-                onChange={(e) => setEditCollegeName(e.target.value)}
-                placeholder="e.g. ABC College of Engineering"
-                className="h-11 rounded-xl font-bold text-slate-800 border-indigo-200 bg-indigo-50/20 focus:border-indigo-500 focus:ring-indigo-500/20"
-              />
+            <div className="space-y-1.5 relative" ref={collegeDropdownRef}>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black uppercase text-indigo-600 tracking-wider flex items-center gap-1">
+                  <GraduationCap className="h-3.5 w-3.5 text-indigo-500" /> College Name
+                </label>
+                {editCollegeName && (
+                  <span className="text-[10px] text-slate-400 font-semibold truncate max-w-[200px]" title={editCollegeName}>
+                    Selected: {editCollegeName}
+                  </span>
+                )}
+              </div>
+
+              <div className="relative">
+                <Input
+                  value={editCollegeName}
+                  onChange={(e) => {
+                    setEditCollegeName(e.target.value);
+                    setIsCollegeDropdownOpen(true);
+                  }}
+                  onFocus={() => setIsCollegeDropdownOpen(true)}
+                  onClick={() => setIsCollegeDropdownOpen(true)}
+                  placeholder="Click to select or search college..."
+                  list="admin-college-suggestions"
+                  className="h-11 rounded-xl font-bold text-slate-800 border-indigo-200 bg-indigo-50/20 pr-16 focus:border-indigo-500 focus:ring-indigo-500/20 cursor-pointer"
+                />
+                <datalist id="admin-college-suggestions">
+                  {allCollegeList.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                  {editCollegeName && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditCollegeName("");
+                        setIsCollegeDropdownOpen(true);
+                      }}
+                      title="Clear college"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsCollegeDropdownOpen(!isCollegeDropdownOpen);
+                    }}
+                    title={isCollegeDropdownOpen ? "Close dropdown" : "Show all colleges"}
+                  >
+                    {isCollegeDropdownOpen ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              {/* College Dropdown List */}
+              {isCollegeDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <div className="p-2.5 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between text-[11px] font-bold text-slate-600">
+                    <span className="flex items-center gap-1.5">
+                      <GraduationCap className="h-3.5 w-3.5 text-indigo-500" />
+                      All Colleges List ({filteredColleges.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsCollegeDropdownOpen(false)}
+                      className="text-[10px] text-indigo-600 hover:underline cursor-pointer font-bold"
+                    >
+                      Done
+                    </button>
+                  </div>
+
+                  <div className="max-h-52 overflow-y-auto divide-y divide-slate-50 p-1.5">
+                    {/* Custom typed option if not in list */}
+                    {editCollegeName.trim() &&
+                      !allCollegeList.some(
+                        (c) => c.toLowerCase() === editCollegeName.trim().toLowerCase()
+                      ) && (
+                        <div
+                          onClick={() => {
+                            setIsCollegeDropdownOpen(false);
+                          }}
+                          className="p-2.5 rounded-xl hover:bg-indigo-50 cursor-pointer flex items-center justify-between text-xs text-indigo-700 font-semibold bg-indigo-50/40 border border-indigo-100 mb-1"
+                        >
+                          <span className="truncate">
+                            ✨ Keep custom: <strong className="text-indigo-900">"{editCollegeName.trim()}"</strong>
+                          </span>
+                          <Badge variant="outline" className="text-[9px] border-indigo-200 text-indigo-600 shrink-0">
+                            Custom
+                          </Badge>
+                        </div>
+                      )}
+
+                    {filteredColleges.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400 font-medium">
+                        No matching colleges in list. Custom entry will be saved.
+                      </div>
+                    ) : (
+                      filteredColleges.map((college) => {
+                        const isSelected =
+                          editCollegeName.trim().toLowerCase() ===
+                          college.trim().toLowerCase();
+                        return (
+                          <div
+                            key={college}
+                            onClick={() => {
+                              setEditCollegeName(college);
+                              setIsCollegeDropdownOpen(false);
+                            }}
+                            className={`p-2.5 rounded-xl cursor-pointer flex items-center justify-between text-xs transition-colors ${
+                              isSelected
+                                ? "bg-indigo-50 text-indigo-900 font-bold"
+                                : "text-slate-700 hover:bg-slate-50 font-medium"
+                            }`}
+                          >
+                            <span className="truncate pr-2">{college}</span>
+                            {isSelected && (
+                              <Check className="h-4 w-4 text-indigo-600 shrink-0" />
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">

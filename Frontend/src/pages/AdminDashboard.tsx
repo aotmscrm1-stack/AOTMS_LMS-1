@@ -851,6 +851,7 @@ export default function AdminDashboard() {
                       onDeleteUser={deleteUser}
                       onUpdateEnrollmentStatus={async (id, status) => { await _updateEnrollmentStatus(id, status); }}
                       onResetATS={async (userId) => { await _resetStudentATS(userId); }}
+                      onSync={refresh}
                     />
                   </motion.div>
                 </TabsContent>
