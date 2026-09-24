@@ -8066,16 +8066,21 @@ app.delete('/api/batches/:id', authenticateToken, requireInstructor, async (req,
 // Get current student's batch for a specific course
 app.get('/api/batches/my-batch/:courseId', authenticateToken, async (req, res) => {
     try {
+        const courseIdStr = req.params.courseId;
+        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
+        const studentIdStr = req.user.id;
+        const studentIdObj = mongoose.Types.ObjectId.isValid(studentIdStr) ? new mongoose.Types.ObjectId(studentIdStr) : null;
+
         const assignment = await StudentBatch.findOne({
-            student_id: req.user.id,
-            course_id: req.params.courseId
+            student_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
+            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
         }).populate('batch_id').lean();
 
-        if (!assignment) return res.json(null);
+        if (!assignment || !assignment.batch_id) return res.json(null);
 
         const enrollment = await Enrollment.findOne({
-            user_id: req.user.id,
-            course_id: req.params.courseId
+            user_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
+            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
         }).select('requested_batch_type').lean();
 
         res.json({
@@ -8357,7 +8362,12 @@ app.put('/api/batches/students/reassign', authenticateToken, requireInstructor, 
 // Get available batches for a course (student view)
 app.get('/api/batches/course/:courseId', authenticateToken, async (req, res) => {
     try {
-        const filter = { course_id: req.params.courseId, status: { $ne: 'rejected' } };
+        const courseIdStr = req.params.courseId;
+        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
+        const filter = {
+            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) },
+            status: { $ne: 'rejected' }
+        };
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
             filter.instructor_id = req.user.id;
@@ -8785,6 +8795,97 @@ app.post('/api/batches/request/:courseId', authenticateToken, async (req, res) =
         res.json(request);
     } catch (err) {
         handleError(res, err, 'create-batch-request');
+    }
+});
+
+// Student Automatic Self-Assign to a Batch
+app.post('/api/batches/student-self-assign', authenticateToken, async (req, res) => {
+    try {
+        const student_id = req.user.id;
+        const { course_id, batch_id } = req.body;
+        if (!course_id || !batch_id) {
+            return res.status(400).json({ error: 'course_id and batch_id are required' });
+        }
+
+        const studentIdStr = student_id.toString();
+        const studentIdObj = mongoose.Types.ObjectId.isValid(studentIdStr) ? new mongoose.Types.ObjectId(studentIdStr) : null;
+        const courseIdStr = course_id.toString();
+        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
+
+        // Verify student is enrolled in this course
+        const isEnrolled = await Enrollment.findOne({
+            user_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
+            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
+        });
+
+        if (!isEnrolled) {
+            return res.status(403).json({ error: 'You must be enrolled in this course to be assigned a batch' });
+        }
+
+        // Find the batch (supports main batch or nested sub-batch)
+        let batch = await Batch.findById(batch_id).lean();
+        let targetBatchId = batch_id;
+        let session = 'all';
+
+        if (!batch) {
+            batch = await Batch.findOne({ "batches._id": batch_id }).lean();
+            if (batch) {
+                targetBatchId = batch._id.toString();
+                const subBatch = batch.batches?.find(sb => sb._id.toString() === batch_id);
+                if (subBatch) session = subBatch.batch_type || 'all';
+            }
+        }
+
+        if (!batch) {
+            return res.status(404).json({ error: 'Selected batch was not found' });
+        }
+
+        if (session === 'all' && batch.batch_type) {
+            session = batch.batch_type;
+        }
+
+        const batchObjId = mongoose.Types.ObjectId.isValid(targetBatchId) ? new mongoose.Types.ObjectId(targetBatchId) : targetBatchId;
+
+        // Automatically assign the student
+        const assignment = await StudentBatch.findOneAndUpdate(
+            {
+                student_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
+                course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
+            },
+            {
+                student_id: studentIdObj || studentIdStr,
+                course_id: courseIdObj || courseIdStr,
+                batch_id: batchObjId,
+                assigned_session: session,
+                assigned_time_slot: batch.start_time && batch.end_time ? `${batch.start_time} - ${batch.end_time}` : undefined,
+                assigned_by: studentIdObj || studentIdStr,
+                assigned_at: new Date(),
+                updated_at: new Date()
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        ).populate('batch_id');
+
+        // Also update requested_batch_type in Enrollment
+        if (session && session !== 'all') {
+            await Enrollment.updateOne(
+                {
+                    user_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
+                    course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
+                },
+                { $set: { requested_batch_type: session } }
+            );
+        }
+
+        res.json({
+            success: true,
+            message: `Successfully assigned to ${batch.batch_name}!`,
+            assignment: {
+                ...assignment.toObject(),
+                id: assignment._id.toString()
+            }
+        });
+    } catch (err) {
+        handleError(res, err, 'student-self-assign');
     }
 });
 

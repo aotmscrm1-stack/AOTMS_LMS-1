@@ -523,7 +523,7 @@ export default function InstructorDashboard() {
   const isProfile = path === "/instructor/profile";
   const isResumeScans = path === "/instructor/resume-scans";
   const isNotifications = path === "/instructor/notifications";
-  const isResources = path === "/instructor/resources";
+  const isResources = path === "/instructor/resources" || path === "/instructor/test-resources";
   const isGrading = path === "/instructor/grading";
 
   return (

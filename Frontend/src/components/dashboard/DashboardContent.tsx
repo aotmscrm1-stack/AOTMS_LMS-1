@@ -1303,20 +1303,7 @@ export function DashboardContent({ basePath = "/student-dashboard" }: { basePath
             <div className="lg:ml-auto flex flex-col lg:flex-row items-stretch lg:items-center gap-3 w-full lg:w-auto min-w-0">
               {currentPath === "/student-dashboard/courses" && (
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto min-w-0">
-                    {/* Course selector only */}
                     <StudentBatchSelector />
-                    {/* Pulse Your Rating */}
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setSelectedCourseForRating({ id: 'GENERAL', title: 'AOTMS Pro Academy' });
-                        setRatingModalOpen(true);
-                      }}
-                      className="bg-white border-2 border-slate-100 text-slate-900 font-black rounded-xl px-4 sm:px-6 h-10 sm:h-12 shadow-sm hover:border-yellow-400 hover:text-yellow-600 transition-all gap-2 text-[10px] sm:text-xs uppercase shrink-0 w-full sm:w-auto"
-                    >
-                      <Star className="h-4 w-4 fill-current" />
-                      Pulse Your Rating
-                    </Button>
                 </div>
               )}
 

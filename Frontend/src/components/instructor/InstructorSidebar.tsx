@@ -1,5 +1,6 @@
-import { useLocation, Link, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import React from "react";
+import { useLocation, Link } from "react-router-dom";
+import { motion } from "framer-motion";
 import {
   Sidebar,
   SidebarContent,
@@ -18,16 +19,12 @@ import {
   BookOpen,
   Users,
   Video,
-  Calendar,
   FileQuestion,
   FileText,
   BarChart3,
-  HelpCircle,
   LogOut,
   FolderOpen,
-  Zap,
   Radio,
-  Settings,
   ShieldCheck,
   RefreshCw,
   User,
@@ -43,229 +40,206 @@ import { useInstructorStats } from "@/hooks/useInstructorData";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
+interface NavItem {
+  title: string;
+  url: string;
+  icon: React.ComponentType<{ className?: string }>;
+  isLive?: boolean;
+  showBadge?: boolean;
+}
 
-const mainNavItems = [
-  { title: "Dashboard", url: "/instructor", icon: LayoutDashboard },
-  { title: "My Profile", url: "/instructor/profile", icon: User },
-  { title: "My Courses", url: "/instructor/my-courses", icon: BookOpen },
-  { title: "Student Roster", url: "/instructor/students", icon: Users, isLive: true },
-  { title: "Notifications", url: "/instructor/notifications", icon: Bell },
-  { title: "Messages", url: "/instructor/chat", icon: MessageSquare },
-  { title: "Live Broadcast", url: "/instructor/live-classes", icon: Radio },
-];
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
 
-
-const contentNavItems = [
-  { title: "Video Library", url: "/instructor/videos", icon: Video },
-  { title: "Course Resources", url: "/instructor/resources", icon: FolderOpen },
-  { title: "Manual Grading", url: "/instructor/grading", icon: BarChart3 },
-  { title: "Assessment Protocols", url: "/instructor/exams", icon: ShieldCheck },
-  { title: "Question Bank", url: "/instructor/question-bank", icon: FolderOpen },
-  { title: "Question Access", url: "/instructor/question-access", icon: ShieldCheck },
-  { title: "Resume Scan Logs", url: "/instructor/resume-scans", icon: FileText },
-];
-
-const analyticNavItems = [
-  { title: "Performance", url: "/instructor/performance", icon: BarChart3 },
+const navGroups: NavGroup[] = [
+  {
+    label: "Operations Hub",
+    items: [
+      { title: "Dashboard", url: "/instructor", icon: LayoutDashboard },
+      { title: "My Profile", url: "/instructor/profile", icon: User },
+      { title: "My Course", url: "/instructor/my-courses", icon: BookOpen },
+    ],
+  },
+  {
+    label: "Student Hub",
+    items: [
+      { title: "Student Roaster", url: "/instructor/students", icon: Users, isLive: true, showBadge: true },
+      { title: "Messages", url: "/instructor/chat", icon: MessageSquare },
+      { title: "Live Board cast", url: "/instructor/live-classes", icon: Radio, isLive: true },
+      { title: "Notifications", url: "/instructor/notifications", icon: Bell },
+    ],
+  },
+  {
+    label: "Curriculum Management",
+    items: [
+      { title: "Video Library", url: "/instructor/videos", icon: Video },
+      { title: "Course resources", url: "/instructor/resources", icon: FolderOpen },
+    ],
+  },
+  {
+    label: "Test Conduct",
+    items: [
+      { title: "AssesMent Portal", url: "/instructor/exams", icon: ShieldCheck },
+      { title: "Queation Bank", url: "/instructor/question-bank", icon: FileQuestion },
+      { title: "Queation Access", url: "/instructor/question-access", icon: CheckCircle2 },
+      { title: "Manual Grading", url: "/instructor/grading", icon: BarChart3 },
+      { title: "Course Resourses", url: "/instructor/test-resources", icon: FolderOpen },
+    ],
+  },
+  {
+    label: "ATS",
+    items: [
+      { title: "Resume Scan Logs", url: "/instructor/resume-scans", icon: FileText },
+    ],
+  },
 ];
 
 export function InstructorSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
-  const navigate = useNavigate();
   const { signOut } = useAuth();
   const { data: stats } = useInstructorStats();
 
   const isActive = (path: string) => {
-
     if (path === "/instructor") {
       return (
         location.pathname === "/instructor" ||
         location.pathname === "/instructor/"
       );
     }
-    return location.pathname.startsWith(path);
+    return location.pathname === path || location.pathname.startsWith(`${path}/`);
   };
 
   return (
     <Sidebar
       collapsible="icon"
-      className="border-r border-slate-200/40 !bg-white/80 backdrop-blur-2xl font-sans shadow-[20px_0_40px_rgba(0,0,0,0.01)]"
+      className="border-r border-slate-200/60 !bg-white font-sans shadow-sm"
     >
       <SidebarHeader className="h-20 flex items-center justify-center px-4 group-data-[collapsible=icon]:px-0 border-b border-slate-200/60">
         <Link
-          to="/"
+          to="/instructor"
           className="flex flex-col gap-1 items-center active:scale-95 transition-transform"
         >
           <img
             src={logo}
             alt="AOTMS Logo"
-            className="h-12 w-auto object-contain group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8"
+            className="h-11 w-auto object-contain group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8"
           />
           {!collapsed && (
-            <span className="text-[10px] font-bold text-primary uppercase tracking-wider">
+            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
               Instructor Panel
             </span>
           )}
         </Link>
       </SidebarHeader>
 
-      <SidebarContent className="px-3 group-data-[collapsible=icon]:px-2 py-6 space-y-8 scrollbar-hide">
-        {/* Hub */}
-        <SidebarGroup>
-          <div className="px-4 mb-4">
-             <SidebarGroupLabel className="text-[10px] uppercase font-black tracking-[0.2em] text-slate-400 p-0 h-auto">Operations Hub</SidebarGroupLabel>
-          </div>
-          <SidebarGroupContent>
-            <SidebarMenu className="gap-1.5">
-              {mainNavItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={item.title}
-                    className={cn(
-                        "h-12 px-4 rounded-xl transition-all duration-300 group relative overflow-hidden",
-                        isActive(item.url) 
-                          ? "bg-blue-600 text-white shadow-xl shadow-blue-600/20" 
-                          : "hover:bg-blue-50 text-slate-600 hover:text-blue-600"
-                    )}
-                  >
-                    <Link to={item.url} className="flex items-center gap-3.5 w-full">
-                      <div className="relative z-10">
-                        <item.icon
-                          className={cn(
-                              "h-[1.125rem] w-[1.125rem] transition-all duration-300",
-                              isActive(item.url) ? "text-white scale-110" : "text-slate-400 group-hover:text-primary"
-                          )}
-                        />
-                        {item.isLive && (
-                          <span className={cn(
-                              "absolute -top-1 -right-1 h-2 w-2 rounded-full border-2 animate-pulse",
-                              isActive(item.url) ? "bg-white border-primary" : "bg-emerald-500 border-white"
-                          )} />
+      <SidebarContent className="px-3 group-data-[collapsible=icon]:px-2 py-4 space-y-6 scrollbar-hide">
+        {navGroups.map((group) => (
+          <SidebarGroup key={group.label} className="p-0">
+            {!collapsed && (
+              <div className="px-3 mb-2">
+                <SidebarGroupLabel className="text-[11px] uppercase font-medium tracking-wider text-slate-400 p-0 h-auto">
+                  {group.label}
+                </SidebarGroupLabel>
+              </div>
+            )}
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-1">
+                {group.items.map((item, idx) => {
+                  const active = isActive(item.url);
+                  return (
+                    <SidebarMenuItem key={`${item.title}-${idx}`}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={active}
+                        tooltip={item.title}
+                        className={cn(
+                          "h-10 px-3 rounded-lg transition-colors group relative overflow-hidden",
+                          active
+                            ? "bg-blue-600 text-white font-medium shadow-sm shadow-blue-600/20"
+                            : "hover:bg-slate-100 text-slate-600 hover:text-slate-900 font-normal"
                         )}
-                      </div>
-                      
-                      {!collapsed && (
-                        <motion.div 
-                          className="flex items-center justify-between flex-1 z-10"
-                          initial={{ opacity: 0, x: -5 }}
-                          animate={{ opacity: 1, x: 0 }}
-                        >
-                          <span className={cn(
-                            "font-black text-xs uppercase tracking-wider",
-                            isActive(item.url) ? "text-white" : "group-hover:text-primary"
-                          )}>
-                            {item.title}
-                          </span>
-                          {item.title === "Student Roster" && stats?.totalStudents !== undefined && (
-                            <Badge variant="secondary" className={cn(
-                                "h-5 px-1.5 text-[10px] font-black border-none transition-colors",
-                                isActive(item.url) ? "bg-white/20 text-white" : "bg-slate-100 text-slate-900"
-                            )}>
-                              {stats.totalStudents}
-                            </Badge>
-                          )}
-                        </motion.div>
-                      )}
-
-                      {/* Premium Active Background Glow */}
-                      {isActive(item.url) && (
-                        <motion.div 
-                          layoutId="active-pill"
-                          className="absolute inset-0 bg-blue-600 z-0"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                        />
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* Content */}
-        <SidebarGroup>
-          <div className="px-4 mb-4 mt-2">
-            <SidebarGroupLabel className="text-[10px] uppercase font-black tracking-[0.2em] text-slate-400 p-0 h-auto">Curriculum Management</SidebarGroupLabel>
-          </div>
-          <SidebarGroupContent>
-            <SidebarMenu className="gap-1.5">
-              {contentNavItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={item.title}
-                    className={cn(
-                        "h-12 px-4 rounded-xl transition-all duration-300 group relative overflow-hidden",
-                        isActive(item.url) 
-                          ? "bg-blue-600 text-white shadow-xl shadow-blue-600/20" 
-                          : "hover:bg-blue-50 text-slate-600 hover:text-blue-600"
-                    )}
-                  >
-                    <Link to={item.url} className="flex items-center gap-3.5">
-                      <div className="relative z-10">
-                        <item.icon
-                           className={cn(
-                                "h-[1.125rem] w-[1.125rem] transition-all duration-300",
-                                isActive(item.url) ? "text-white scale-110" : "text-slate-400 group-hover:text-blue-600"
-                           )}
-                        />
-                      </div>
-                      {!collapsed && (
-                        <motion.span 
-                            className={cn(
-                                "font-black text-xs uppercase tracking-wider z-10",
-                                isActive(item.url) ? "text-white" : "group-hover:text-blue-600"
+                      >
+                        <Link to={item.url} className="flex items-center gap-3 w-full">
+                          <div className="relative z-10 flex items-center justify-center shrink-0">
+                            <item.icon
+                              className={cn(
+                                "h-4 w-4 transition-colors",
+                                active ? "text-white" : "text-slate-400 group-hover:text-slate-700"
+                              )}
+                            />
+                            {item.isLive && (
+                              <span
+                                className={cn(
+                                  "absolute -top-1 -right-1 h-2 w-2 rounded-full border-2 animate-pulse",
+                                  active ? "bg-white border-blue-600" : "bg-emerald-500 border-white"
+                                )}
+                              />
                             )}
-                            initial={{ opacity: 0, x: -5 }}
-                            animate={{ opacity: 1, x: 0 }}
-                        >
-                            {item.title}
-                        </motion.span>
-                      )}
-                      
-                      {isActive(item.url) && (
-                        <motion.div 
-                          layoutId="active-pill-dark"
-                          className="absolute inset-0 bg-blue-600 z-0"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                        />
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+                          </div>
 
-        {/* Analytics Section Removed */}
+                          {!collapsed && (
+                            <motion.div
+                              className="flex items-center justify-between flex-1 z-10 min-w-0"
+                              initial={{ opacity: 0, x: -4 }}
+                              animate={{ opacity: 1, x: 0 }}
+                            >
+                              <span
+                                className={cn(
+                                  "text-[13px] tracking-normal truncate transition-colors",
+                                  active
+                                    ? "text-white font-medium"
+                                    : "text-slate-600 group-hover:text-slate-900 font-normal"
+                                )}
+                              >
+                                {item.title}
+                              </span>
+                              {item.showBadge && stats?.totalStudents !== undefined && (
+                                <Badge
+                                  variant="secondary"
+                                  className={cn(
+                                    "h-5 px-1.5 text-[10px] font-medium border-none transition-colors",
+                                    active
+                                      ? "bg-white/20 text-white"
+                                      : "bg-slate-100 text-slate-600"
+                                  )}
+                                >
+                                  {stats.totalStudents}
+                                </Badge>
+                              )}
+                            </motion.div>
+                          )}
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
-      <SidebarFooter className="p-4 group-data-[collapsible=icon]:p-2 border-t border-slate-50 bg-slate-50/50">
-        <div className="space-y-2">
+      <SidebarFooter className="p-3 group-data-[collapsible=icon]:p-2 border-t border-slate-100 bg-slate-50/50">
+        <div className="space-y-1">
           <Button
             variant="ghost"
-            className="w-full justify-start group-data-[collapsible=icon]:justify-center gap-3 h-11 px-4 group-data-[collapsible=icon]:px-0 rounded-lg text-primary hover:bg-primary/5 font-semibold transition-all"
+            className="w-full justify-start group-data-[collapsible=icon]:justify-center gap-3 h-9 px-3 group-data-[collapsible=icon]:px-0 rounded-lg text-slate-600 hover:bg-slate-100 font-normal transition-all"
             onClick={() => window.location.reload()}
           >
-            <RefreshCw className="h-5 w-5 shrink-0" />
-            {!collapsed && <span className="text-sm">Refresh Data</span>}
+            <RefreshCw className="h-4 w-4 shrink-0 text-slate-500" />
+            {!collapsed && <span className="text-[13px]">Refresh Data</span>}
           </Button>
           <Button
             variant="ghost"
-            className="w-full justify-start group-data-[collapsible=icon]:justify-center gap-3 h-11 px-4 group-data-[collapsible=icon]:px-0 rounded-lg text-rose-600 hover:bg-rose-50 hover:text-rose-700 font-semibold"
+            className="w-full justify-start group-data-[collapsible=icon]:justify-center gap-3 h-9 px-3 group-data-[collapsible=icon]:px-0 rounded-lg text-rose-600 hover:bg-rose-50 hover:text-rose-700 font-normal transition-all"
             onClick={signOut}
           >
-            <LogOut className="h-5 w-5 shrink-0" />
-            {!collapsed && <span className="text-sm">Sign Out</span>}
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!collapsed && <span className="text-[13px]">Sign Out</span>}
           </Button>
         </div>
       </SidebarFooter>
