@@ -18,7 +18,8 @@ import { Progress } from '@/components/ui/progress';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  SelectGroup, SelectLabel, SelectSeparator
 } from '@/components/ui/select';
 import { 
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter 
@@ -107,7 +108,7 @@ function StatCard({
 }: { 
   title: string; 
   value: string | number; 
-  icon: React.ElementType; 
+  icon: React.ComponentType<{ className?: string }>; 
   trend?: 'up' | 'down'; 
   trendValue?: string;
   color: string;
@@ -165,6 +166,12 @@ function StudentRow({ student, onSendMessage, onViewDetails }: {
 }) {
   const status = getStatusConfig(student.status);
   
+  const assignedBatches = useMemo(() => {
+    return (student.courseEnrollments || [])
+      .filter(e => e.batchName && e.batchName !== 'Unassigned')
+      .map(e => ({ name: e.batchName, session: e.batchType }));
+  }, [student.courseEnrollments]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -187,7 +194,7 @@ function StudentRow({ student, onSendMessage, onViewDetails }: {
         </div>
         <div className="min-w-0">
           <p className="font-black text-xl text-slate-900 truncate tracking-tight mb-1 group-hover:text-black transition-colors">{student.name}</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="secondary" className={cn(
               "h-6 px-3 text-[10px] font-black border-none uppercase tracking-[0.05em] rounded-lg",
               status.bg,
@@ -195,6 +202,24 @@ function StudentRow({ student, onSendMessage, onViewDetails }: {
             )}>
               {status.label}
             </Badge>
+            {assignedBatches.length > 0 ? (
+              assignedBatches.map((b, idx) => (
+                <Badge 
+                  key={idx} 
+                  variant="outline" 
+                  className="h-6 px-2.5 text-[10px] font-bold bg-indigo-50/70 text-indigo-700 border-indigo-200/80 rounded-lg flex items-center gap-1"
+                >
+                  <span className="truncate max-w-[150px]">{b.name}</span>
+                  {b.session && b.session !== 'unassigned' && (
+                    <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75">({b.session})</span>
+                  )}
+                </Badge>
+              ))
+            ) : (
+              <Badge variant="secondary" className="h-6 px-2.5 text-[10px] font-bold bg-slate-100 text-slate-500 border-none rounded-lg">
+                Unassigned
+              </Badge>
+            )}
             <span className="text-[11px] font-bold text-slate-400 font-mono tracking-tighter">ID: {student.userId.slice(-6).toUpperCase()}</span>
           </div>
         </div>
@@ -486,6 +511,19 @@ export function InstructorStudentDashboard() {
   }, [courses, batchFilter, hasAutoSet]);
 
 
+  const availableBatchNames = useMemo(() => {
+    if (!students) return [];
+    const names = new Set<string>();
+    students.forEach(s => {
+      s.courseEnrollments?.forEach(e => {
+        if (e.batchName && e.batchName !== 'Unassigned') {
+          names.add(e.batchName);
+        }
+      });
+    });
+    return Array.from(names).sort();
+  }, [students]);
+
   const groupedStudents = useMemo(() => {
     if (!students) return {};
     
@@ -529,10 +567,20 @@ export function InstructorStudentDashboard() {
       ));
 
       if (batchFilter !== 'all') {
-        const normalizedFilter = batchFilter.toLowerCase();
-        // If a specific filter is set, only include students that belong to THAT batch
-        if (batchTypes.includes(normalizedFilter)) {
-          groups[normalizedFilter].push(student);
+        if (batchFilter.startsWith('batch:')) {
+          const targetBatch = batchFilter.replace('batch:', '');
+          const matchesBatch = relevantEnrollments.some(e => e.batchName === targetBatch);
+          if (matchesBatch) {
+            if (!groups[targetBatch]) groups[targetBatch] = [];
+            groups[targetBatch].push(student);
+          }
+        } else {
+          const normalizedFilter = batchFilter.toLowerCase();
+          // If a specific filter is set, only include students that belong to THAT batch
+          if (batchTypes.includes(normalizedFilter)) {
+            if (!groups[normalizedFilter]) groups[normalizedFilter] = [];
+            groups[normalizedFilter].push(student);
+          }
         }
       } else {
         // "All Batches" - show student in EVERY group they belong to
@@ -556,6 +604,10 @@ export function InstructorStudentDashboard() {
 
     // Only return groups that have students or the specific group if a filter is set
     if (batchFilter !== 'all') {
+      if (batchFilter.startsWith('batch:')) {
+        const targetBatch = batchFilter.replace('batch:', '');
+        return { [targetBatch]: groups[targetBatch] || [] };
+      }
       const normalizedFilter = batchFilter.toLowerCase();
       return { [normalizedFilter]: groups[normalizedFilter] || [] };
     }
@@ -688,15 +740,30 @@ export function InstructorStudentDashboard() {
                     </Select>
 
                     <Select value={batchFilter} onValueChange={setBatchFilter}>
-                      <SelectTrigger className="w-[140px] h-12 rounded-2xl bg-white border-none shadow-sm ring-1 ring-slate-100 text-[10px] font-black uppercase tracking-widest">
+                      <SelectTrigger className="w-[170px] h-12 rounded-2xl bg-white border-none shadow-sm ring-1 ring-slate-100 text-[10px] font-black uppercase tracking-widest">
                         <Clock className="w-3.5 h-3.5 mr-2 opacity-40 text-primary" />
                         <SelectValue placeholder="Batch" />
                       </SelectTrigger>
-                      <SelectContent className="rounded-2xl border-none shadow-2xl p-2">
+                      <SelectContent className="rounded-2xl border-none shadow-2xl p-2 max-h-[320px]">
                         <SelectItem value="all" className="rounded-xl font-bold">All Batches</SelectItem>
-                        <SelectItem value="morning" className="rounded-xl font-bold">Morning</SelectItem>
-                        <SelectItem value="afternoon" className="rounded-xl font-bold">Afternoon</SelectItem>
-                        <SelectItem value="evening" className="rounded-xl font-bold">Evening</SelectItem>
+                        <SelectItem value="morning" className="rounded-xl font-bold">Morning Session</SelectItem>
+                        <SelectItem value="afternoon" className="rounded-xl font-bold">Afternoon Session</SelectItem>
+                        <SelectItem value="evening" className="rounded-xl font-bold">Evening Session</SelectItem>
+                        {availableBatchNames.length > 0 && (
+                          <>
+                            <SelectSeparator className="my-1 bg-slate-100" />
+                            <SelectGroup>
+                              <SelectLabel className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-2 py-1.5">
+                                Batches
+                              </SelectLabel>
+                              {availableBatchNames.map((name) => (
+                                <SelectItem key={name} value={`batch:${name}`} className="rounded-xl font-bold">
+                                  {name}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -719,25 +786,31 @@ export function InstructorStudentDashboard() {
                     </div>
                   ) : totalFilteredCount > 0 ? (
                     <div className="space-y-10">
-                      {Object.entries(groupedStudents).map(([group, sList]) => (
+                       {Object.entries(groupedStudents).map(([group, sList]) => {
+                        const isStandardSession = ['morning', 'afternoon', 'evening', 'unassigned'].includes(group.toLowerCase());
+                        return (
                         <div key={group} className="space-y-6">
                            <div className="flex items-center gap-4 px-2">
                               <div className={cn(
                                 "h-10 w-10 rounded-xl flex items-center justify-center shadow-lg",
                                 group === 'morning' ? "bg-amber-400 text-white shadow-amber-200" :
                                 group === 'afternoon' ? "bg-blue-500 text-white shadow-blue-200" :
-                                group === 'evening' ? "bg-indigo-600 text-white shadow-indigo-200" : "bg-slate-400 text-white shadow-slate-200"
+                                group === 'evening' ? "bg-indigo-600 text-white shadow-indigo-200" :
+                                group === 'unassigned' ? "bg-slate-400 text-white shadow-slate-200" : "bg-purple-600 text-white shadow-purple-200"
                               )}>
                                  {group === 'morning' && <Sun className="h-5 w-5" />}
                                  {group === 'afternoon' && <CloudSun className="h-5 w-5" />}
                                  {group === 'evening' && <Moon className="h-5 w-5" />}
                                  {group === 'unassigned' && <Users className="h-5 w-5" />}
+                                 {!isStandardSession && <BookOpen className="h-5 w-5" />}
                               </div>
                               <div className="flex flex-col">
                                 <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight italic">
-                                  {group} BATCH <span className="text-slate-300 ml-2">[{sList.length}]</span>
+                                  {group} {isStandardSession && group !== 'unassigned' ? 'BATCH' : ''} <span className="text-slate-300 ml-2">[{sList.length}]</span>
                                 </h4>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ongoing Learning Session</p>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                  {isStandardSession ? 'Ongoing Learning Session' : 'Assigned Batch Cohort'}
+                                </p>
                               </div>
                               <div className="h-px flex-1 bg-gradient-to-r from-slate-100 to-transparent ml-4" />
                            </div>
@@ -753,7 +826,7 @@ export function InstructorStudentDashboard() {
                             ))}
                            </div>
                         </div>
-                      ))}
+                      );})}
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-32 text-center">
@@ -798,8 +871,17 @@ export function InstructorStudentDashboard() {
                     <h3 className="text-xl sm:text-2xl font-black text-slate-900 leading-tight mb-1">{selectedStudent.name}</h3>
                     <div className="flex flex-wrap gap-2 items-center">
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">ID: {selectedStudent.userId.slice(-6).toUpperCase()}</p>
+                        {Array.from(new Set(selectedStudent.courseEnrollments.map(e => e.batchName).filter(Boolean))).map((bn, i) => {
+                            if (bn === 'Unassigned') return null;
+                            return (
+                                <Badge key={`batch-${i}`} variant="outline" className="text-[9px] h-4.5 px-2 bg-indigo-50 text-indigo-700 border-indigo-200 uppercase font-black tracking-tighter">
+                                    {bn}
+                                </Badge>
+                            );
+                        })}
                         {Array.from(new Set(selectedStudent.courseEnrollments.map(e => e.batchType).filter(Boolean))).map((bt, i) => {
                             const batchType = bt as string;
+                            if (batchType === 'unassigned') return null;
                             return (
                                 <Badge key={i} variant="outline" className={cn(
                                     "text-[9px] h-4.5 px-2 border-none uppercase font-black tracking-tighter",

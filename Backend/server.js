@@ -8175,10 +8175,28 @@ app.get('/api/batches/student-assignments', authenticateToken, requireInstructor
             query.course_id = courseQuery;
         }
 
-        // --- SECURITY: Filter by instructor's assigned batches ---
+        // --- SECURITY: Filter by instructor's assigned batches and assigned courses ---
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
-            const myBatches = await Batch.find({ instructor_id: req.user.id }).select('_id').lean();
+            const userObjId = mongoose.Types.ObjectId.isValid(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : null;
+            const assignedCourses = await Course.find({
+                $or: [
+                    { instructor_ids: req.user.id },
+                    { instructor_ids: userObjId },
+                    { instructor_id: req.user.id },
+                    { instructor_id: userObjId }
+                ]
+            }).select('_id');
+            const assignedCourseIds = assignedCourses.map(c => c._id);
+            const assignedCourseIdStrs = assignedCourses.map(c => c._id.toString());
+
+            const myBatches = await Batch.find({
+                $or: [
+                    { instructor_id: req.user.id },
+                    { instructor_id: userObjId },
+                    { course_id: { $in: [...assignedCourseIds, ...assignedCourseIdStrs] } }
+                ]
+            }).select('_id').lean();
             const myBatchIds = myBatches.map(b => b._id);
             query.batch_id = { $in: myBatchIds };
         }
@@ -8438,7 +8456,12 @@ app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstru
         const userIdObj = mongoose.Types.ObjectId.isValid(userIdStr) ? new mongoose.Types.ObjectId(userIdStr) : null;
         const userMatchIds = [userIdStr, userIdObj].filter(Boolean);
 
-        const myBatches = await Batch.find({ instructor_id: { $in: userMatchIds } }).select('_id').lean();
+        const myBatches = await Batch.find({
+            $or: [
+                { instructor_id: { $in: userMatchIds } },
+                { course_id: { $in: courseMatchIds } }
+            ]
+        }).select('_id').lean();
         const myBatchIds = new Set(myBatches.map(b => b._id.toString()));
 
         // Map assignments with batch ownership flag

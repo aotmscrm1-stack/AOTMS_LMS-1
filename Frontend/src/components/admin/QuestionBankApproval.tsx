@@ -431,11 +431,8 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
 
         if (isInstructor) {
             return batches.filter(b => {
-                const inst = b.instructor;
-                const batchInstructorId = (b.instructor_id || (typeof inst === 'object' ? (inst?._id || inst?.id) : inst))?.toString();
-                const isMyBatch = batchInstructorId === currentUserId;
                 const matchesType = selectedBatchTypeFilter === 'all' || b.batch_type === selectedBatchTypeFilter;
-                return isMyBatch && matchesType;
+                return matchesType;
             });
         }
 
