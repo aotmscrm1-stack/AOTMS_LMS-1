@@ -27,6 +27,7 @@ import {
   Folder,
   ClipboardCheck,
   Award,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useEnrolledCourses } from "@/hooks/useStudentData";
@@ -50,6 +51,12 @@ const navigationGroups = [
       { title: "Video Lessons", url: "/intern-dashboard/videos", icon: Video },
       { title: "Live Classes", url: "/intern-dashboard/live-classes", icon: Calendar },
       { title: "Resources", url: "/intern-dashboard/resources", icon: Folder },
+    ],
+  },
+  {
+    label: "Academic",
+    items: [
+      { title: "Mock Papers", url: "/intern-dashboard/mock-papers", icon: FileText },
     ],
   },
   {

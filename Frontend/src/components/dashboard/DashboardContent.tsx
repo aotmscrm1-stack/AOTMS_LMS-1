@@ -1267,7 +1267,7 @@ export function DashboardContent({ basePath = "/student-dashboard" }: { basePath
     };
   }, [socket, queryClient]);
 
-  const INTERN_HIDDEN_ROUTES = ["/student-dashboard/resume-ats", "/student-dashboard/mock-papers"];
+  const INTERN_HIDDEN_ROUTES = ["/student-dashboard/resume-ats"];
   const isIntern = basePath !== "/student-dashboard";
 
   if (currentPath === "/student-dashboard" || currentPath === "/student-dashboard/") {
