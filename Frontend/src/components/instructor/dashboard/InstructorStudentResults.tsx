@@ -65,7 +65,7 @@ export interface StudentResultItem {
   grading_status: string;
   time_spent: number;
   submitted_at: string;
-  questions_count: number;
+  questions_count?: number;
   questions_snapshot: Array<{
     question_id?: string;
     question_text: string;
@@ -73,6 +73,14 @@ export interface StudentResultItem {
     correct_answer?: string;
     student_answer?: string;
     marks?: number;
+    is_correct?: boolean;
+    options?: Array<{
+      id?: string;
+      _id?: string;
+      text?: string;
+      option_text?: string;
+      is_correct?: boolean;
+    }>;
   }>;
 }
 
@@ -168,6 +176,69 @@ export function InstructorStudentResults() {
     const secs = seconds % 60;
     if (mins === 0) return `${secs}s`;
     return `${mins}m ${secs}s`;
+  };
+
+  // Helper to format/resolve student answer text (prevent showing raw ObjectIds)
+  const formatAnswerText = (
+    rawAns?: string,
+    options?: Array<{ id?: string; _id?: string; text?: string; option_text?: string }>
+  ) => {
+    if (!rawAns || rawAns.trim() === "") return "Not Attempted / Skipped";
+
+    const clean = rawAns.trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(clean);
+
+    if (options && Array.isArray(options) && options.length > 0) {
+      const match = options.find(
+        (o) =>
+          (o._id && o._id.toString() === clean) ||
+          (o.id && o.id.toString() === clean) ||
+          (o.text && o.text.trim() === clean) ||
+          (o.option_text && o.option_text.trim() === clean)
+      );
+      if (match) {
+        return match.text || match.option_text || clean;
+      }
+    }
+
+    if (isObjectId) {
+      return `Attempted (Option ${clean.slice(-4)})`;
+    }
+
+    return clean;
+  };
+
+  // Helper to format/resolve correct answer text
+  const formatCorrectAnswerText = (
+    rawCorrect?: string,
+    options?: Array<{ id?: string; _id?: string; text?: string; option_text?: string; is_correct?: boolean }>
+  ) => {
+    if (rawCorrect && rawCorrect.trim() !== "") {
+      const clean = rawCorrect.trim();
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(clean);
+      if (options && Array.isArray(options) && options.length > 0) {
+        const match = options.find(
+          (o) =>
+            (o._id && o._id.toString() === clean) ||
+            (o.id && o.id.toString() === clean) ||
+            (o.text && o.text.trim() === clean) ||
+            (o.option_text && o.option_text.trim() === clean)
+        );
+        if (match) {
+          return match.text || match.option_text || clean;
+        }
+      }
+      if (!isObjectId) return clean;
+    }
+
+    if (options && Array.isArray(options)) {
+      const correctOpt = options.find((o) => o.is_correct);
+      if (correctOpt) {
+        return correctOpt.text || correctOpt.option_text || "N/A";
+      }
+    }
+
+    return rawCorrect || "Not Specified";
   };
 
   // CSV Export handler
@@ -458,25 +529,25 @@ export function InstructorStudentResults() {
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="overflow-x-auto rounded-xl">
+            <table className="w-full min-w-[1350px] text-left border-collapse">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] uppercase font-medium tracking-wider text-slate-400">
-                  <th className="py-3.5 px-4 sm:px-6">Student</th>
-                  <th className="py-3.5 px-4">Course & Batch</th>
-                  <th className="py-3.5 px-4">Mock Paper Test</th>
-                  <th className="py-3.5 px-4">Score & %</th>
-                  <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4">Time Taken</th>
-                  <th className="py-3.5 px-4">Submitted At</th>
-                  <th className="py-3.5 px-4 sm:px-6 text-right">Action</th>
+                <tr className="border-b border-slate-200/80 bg-slate-50/90 text-[11px] uppercase font-semibold tracking-wider text-slate-500">
+                  <th className="py-4 px-6 w-[280px] min-w-[280px]">Student</th>
+                  <th className="py-4 px-5 w-[240px] min-w-[240px]">Course & Batch</th>
+                  <th className="py-4 px-5 w-[240px] min-w-[240px]">Mock Paper Test</th>
+                  <th className="py-4 px-5 w-[160px] min-w-[160px]">Score & %</th>
+                  <th className="py-4 px-5 w-[140px] min-w-[140px]">Status</th>
+                  <th className="py-4 px-5 w-[140px] min-w-[140px]">Time Taken</th>
+                  <th className="py-4 px-5 w-[180px] min-w-[180px]">Submitted At</th>
+                  <th className="py-4 px-6 w-[120px] min-w-[120px] text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {filteredResults.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/60 transition-colors group">
+                  <tr key={item.id} className="hover:bg-slate-50/70 transition-colors group">
                     {/* Student Info */}
-                    <td className="py-3.5 px-4 sm:px-6">
+                    <td className="py-4 px-6 w-[280px] min-w-[280px]">
                       <div className="flex items-center gap-3">
                         <Avatar className="h-9 w-9 border border-slate-200 shrink-0">
                           <AvatarImage src={item.student_avatar} />
@@ -498,11 +569,11 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Course & Batch */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-5 w-[240px] min-w-[240px]">
                       <div className="min-w-0 space-y-1">
                         <Badge
                           variant="secondary"
-                          className="bg-blue-50 text-blue-700 border-none font-medium text-[11px] px-2 py-0.5 rounded-md truncate max-w-[180px]"
+                          className="bg-blue-50 text-blue-700 border-none font-medium text-[11px] px-2.5 py-0.5 rounded-md truncate max-w-[220px]"
                         >
                           {item.course_title}
                         </Badge>
@@ -516,9 +587,9 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Test Title */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-5 w-[240px] min-w-[240px]">
                       <div className="min-w-0">
-                        <p className="font-medium text-slate-800 truncate max-w-[200px]">{item.test_title}</p>
+                        <p className="font-medium text-slate-800 truncate max-w-[220px]">{item.test_title}</p>
                         <span className="text-[10px] text-slate-400 font-normal">
                           {item.total_questions || item.questions_count} questions
                         </span>
@@ -526,7 +597,7 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Score & Percentage */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-5 w-[160px] min-w-[160px]">
                       <div className="space-y-1">
                         <div className="flex items-baseline gap-1">
                           <span className="font-bold text-sm text-slate-900">{item.score}</span>
@@ -553,7 +624,7 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Pass/Fail Status */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-5 w-[140px] min-w-[140px]">
                       {item.passed ? (
                         <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50 border-emerald-200/60 font-medium text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 w-fit">
                           <CheckCircle2 className="h-3 w-3" />
@@ -568,7 +639,7 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Time Taken */}
-                    <td className="py-3.5 px-4 text-slate-600 font-normal whitespace-nowrap">
+                    <td className="py-4 px-5 w-[140px] min-w-[140px] text-slate-600 font-normal whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         <Clock className="h-3.5 w-3.5 text-slate-400" />
                         <span>{formatTimeSpent(item.time_spent)}</span>
@@ -576,7 +647,7 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Date Submitted */}
-                    <td className="py-3.5 px-4 text-slate-500 font-normal whitespace-nowrap">
+                    <td className="py-4 px-5 w-[180px] min-w-[180px] text-slate-500 font-normal whitespace-nowrap">
                       {new Date(item.submitted_at).toLocaleDateString(undefined, {
                         month: "short",
                         day: "numeric",
@@ -591,7 +662,7 @@ export function InstructorStudentResults() {
                     </td>
 
                     {/* Action */}
-                    <td className="py-3.5 px-4 sm:px-6 text-right">
+                    <td className="py-4 px-6 w-[120px] min-w-[120px] text-right">
                       <Button
                         size="sm"
                         variant="outline"
@@ -599,7 +670,7 @@ export function InstructorStudentResults() {
                           setSelectedResult(item);
                           setIsReviewOpen(true);
                         }}
-                        className="h-8 px-2.5 rounded-lg border-slate-200 text-xs font-medium gap-1.5 text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors"
+                        className="h-8 px-3 rounded-lg border-slate-200 text-xs font-medium gap-1.5 text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Review
@@ -694,54 +765,154 @@ export function InstructorStudentResults() {
                   </div>
                 ) : (
                   selectedResult.questions_snapshot.map((q, idx) => {
+                    const studentAnsText = formatAnswerText(q.student_answer, q.options);
+                    const correctAnsText = formatCorrectAnswerText(q.correct_answer, q.options);
+                    const isSkipped =
+                      !q.student_answer ||
+                      q.student_answer.trim() === "" ||
+                      studentAnsText.includes("Not Attempted");
                     const isCorrect =
-                      q.correct_answer &&
-                      q.student_answer &&
-                      q.correct_answer.trim().toLowerCase() === q.student_answer.trim().toLowerCase();
+                      !isSkipped &&
+                      (q.is_correct !== undefined
+                        ? q.is_correct
+                        : studentAnsText.trim().toLowerCase() === correctAnsText.trim().toLowerCase());
 
                     return (
                       <div
                         key={idx}
-                        className={`p-4 rounded-xl border text-xs space-y-2.5 transition-colors ${
-                          isCorrect ? "bg-emerald-50/30 border-emerald-200/80" : "bg-slate-50/50 border-slate-200"
+                        className={`p-4 sm:p-5 rounded-2xl border text-xs space-y-3 transition-colors ${
+                          isCorrect
+                            ? "bg-emerald-50/40 border-emerald-200/80"
+                            : isSkipped
+                            ? "bg-amber-50/40 border-amber-200/80"
+                            : "bg-rose-50/40 border-rose-200/80"
                         }`}
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <p className="font-semibold text-slate-800 leading-snug">
-                            <span className="text-slate-400 mr-1.5">Q{idx + 1}.</span>
+                          <p className="font-semibold text-slate-800 leading-snug text-sm">
+                            <span className="text-slate-400 mr-2 font-mono font-medium">Q{idx + 1}.</span>
                             {q.question_text}
                           </p>
-                          <Badge
-                            variant="secondary"
-                            className={`shrink-0 font-medium text-[10px] ${
-                              isCorrect ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"
-                            }`}
-                          >
-                            {isCorrect ? `+${q.marks || 1} Mark` : "0 Marks"}
-                          </Badge>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isCorrect ? (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-semibold text-[11px] px-2.5 py-0.5">
+                                ✓ Correct (+{q.marks || 1})
+                              </Badge>
+                            ) : isSkipped ? (
+                              <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-semibold text-[11px] px-2.5 py-0.5">
+                                ○ Skipped (0)
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-semibold text-[11px] px-2.5 py-0.5">
+                                ✕ Incorrect (0)
+                              </Badge>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-normal">
-                          <div className="p-2.5 rounded-lg bg-white border border-slate-200 space-y-0.5">
-                            <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide block">
-                              Student's Answer:
+                        {/* Options preview if available */}
+                        {q.options && q.options.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 pb-1">
+                            {q.options.map((opt, oIdx) => {
+                              const optText = opt.text || opt.option_text || "";
+                              const optId = opt._id?.toString() || opt.id?.toString();
+                              const isSelectedByStudent =
+                                q.student_answer === optId ||
+                                q.student_answer === optText ||
+                                studentAnsText === optText;
+                              const isThisCorrectOpt =
+                                Boolean(opt.is_correct) ||
+                                (correctAnsText && optText && correctAnsText.trim().toLowerCase() === optText.trim().toLowerCase()) ||
+                                q.correct_answer === optId ||
+                                q.correct_answer === optText;
+
+                              return (
+                                <div
+                                  key={oIdx}
+                                  className={`px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+                                    isSelectedByStudent && isThisCorrectOpt
+                                      ? "bg-emerald-100/80 border-emerald-300 text-emerald-900 font-medium"
+                                      : isSelectedByStudent
+                                      ? "bg-rose-100/80 border-rose-300 text-rose-900 font-medium"
+                                      : isThisCorrectOpt
+                                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                                      : "bg-white border-slate-200 text-slate-700"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    <span className="font-semibold text-slate-400 text-[10px] w-4">
+                                      {String.fromCharCode(65 + oIdx)}.
+                                    </span>
+                                    <span className="truncate">{optText}</span>
+                                  </div>
+                                  <div className="shrink-0 flex items-center gap-1 text-[10px]">
+                                    {isSelectedByStudent && (
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded font-bold ${
+                                          isThisCorrectOpt ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+                                        }`}
+                                      >
+                                        Student Choice
+                                      </span>
+                                    )}
+                                    {!isSelectedByStudent && isThisCorrectOpt && (
+                                      <span className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold">
+                                        ✓ Correct
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Student Attempted Answer vs Correct Answer Summary */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                          <div
+                            className={`p-3 rounded-xl border space-y-1 ${
+                              isCorrect
+                                ? "bg-white border-emerald-300 shadow-sm"
+                                : isSkipped
+                                ? "bg-white border-amber-300 shadow-sm"
+                                : "bg-white border-rose-300 shadow-sm"
+                            }`}
+                          >
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block">
+                              Student's Attempted Answer:
                             </span>
-                            <span
-                              className={`font-medium ${
-                                isCorrect ? "text-emerald-700" : "text-rose-600 line-through"
-                              }`}
-                            >
-                              {q.student_answer || "Not Answered"}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {isCorrect ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                              ) : isSkipped ? (
+                                <HelpCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                              ) : (
+                                <XCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                              )}
+                              <span
+                                className={`text-xs font-semibold ${
+                                  isCorrect
+                                    ? "text-emerald-700"
+                                    : isSkipped
+                                    ? "text-amber-700"
+                                    : "text-rose-700"
+                                }`}
+                              >
+                                {studentAnsText}
+                              </span>
+                            </div>
                           </div>
 
-                          <div className="p-2.5 rounded-lg bg-white border border-emerald-200 space-y-0.5">
-                            <span className="text-[10px] font-medium text-emerald-600 uppercase tracking-wide block">
+                          <div className="p-3 rounded-xl bg-white border border-emerald-300 shadow-sm space-y-1">
+                            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide block">
                               Correct Answer:
                             </span>
-                            <span className="font-medium text-emerald-700">
-                              {q.correct_answer || "N/A"}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                              <span className="text-xs font-semibold text-emerald-800">
+                                {correctAnsText}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>

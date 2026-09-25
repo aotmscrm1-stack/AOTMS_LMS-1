@@ -6309,15 +6309,29 @@ app.post('/api/student/submit-exam', authenticateToken, async (req, res) => {
             resolvedCourseId = questions.find(q => q.course_id)?.course_id;
         }
 
-        // Build snapshot
-        const questions_snapshot = questions.map(q => ({
-            question_id: q._id,
-            question_text: q.question_text,
-            type: q.type,
-            correct_answer: q.correct_answer || (q.options ? q.options.find(o => o.is_correct)?.text : ""),
-            marks: q.marks || 1,
-            student_answer: answers[q._id.toString()] || ""
-        }));
+        // Build snapshot with human-readable student answer text (resolving option ID to text)
+        const questions_snapshot = questions.map(q => {
+            const rawAns = answers[q._id.toString()] || "";
+            let answerText = rawAns;
+            if (q.options && Array.isArray(q.options) && rawAns) {
+                const optMatch = q.options.find(o =>
+                    (o._id && o._id.toString() === rawAns) ||
+                    (typeof o === 'string' && o === rawAns) ||
+                    o.text === rawAns
+                );
+                if (optMatch) {
+                    answerText = typeof optMatch === 'string' ? optMatch : optMatch.text;
+                }
+            }
+            return {
+                question_id: q._id,
+                question_text: q.question_text,
+                type: q.type,
+                correct_answer: q.correct_answer || (q.options ? q.options.find(o => o.is_correct)?.text : ""),
+                marks: q.marks || 1,
+                student_answer: answerText
+            };
+        });
 
         const result = await ExamResult.create({
             student_id: req.user.id,
@@ -6563,6 +6577,20 @@ app.get('/api/instructor/student-results', authenticateToken, async (req, res) =
         const courseTitleMap = new Map();
         allCourseDocs.forEach(c => courseTitleMap.set(c._id.toString(), c.title));
 
+        // Collect all question IDs across all snapshots to resolve option IDs to human-readable text
+        const allQids = [];
+        examResults.forEach(r => {
+            (r.questions_snapshot || []).forEach(qs => {
+                if (qs.question_id) allQids.push(qs.question_id);
+            });
+        });
+
+        const qbDocs = allQids.length > 0
+            ? await QuestionBank.find({ _id: { $in: allQids } }).select('options correct_answer question_text type').lean()
+            : [];
+        const qbMap = new Map();
+        qbDocs.forEach(q => qbMap.set(q._id.toString(), q));
+
         let formattedResults = examResults.map(r => {
             const sId = r.student_id?._id?.toString();
 
@@ -6590,6 +6618,43 @@ app.get('/api/instructor/student-results', authenticateToken, async (req, res) =
             const passingMarks = r.exam_id?.passing_marks ?? Math.ceil((r.total_questions || 10) * 0.4);
             const passed = r.exam_id?.passing_marks ? (r.score >= passingMarks) : (percentage >= 40);
 
+            // Resolve questions_snapshot so option IDs become actual readable answer text
+            const resolvedSnapshot = (r.questions_snapshot || []).map(qs => {
+                const qbDoc = qs.question_id ? qbMap.get(qs.question_id.toString()) : null;
+                let studentAnsText = qs.student_answer || '';
+                let correctAnsText = qs.correct_answer || '';
+
+                if (qbDoc) {
+                    if (!correctAnsText) {
+                        correctAnsText = qbDoc.correct_answer || qbDoc.options?.find(o => o.is_correct)?.text || '';
+                    }
+                    if (qbDoc.options && Array.isArray(qbDoc.options) && studentAnsText) {
+                        const optMatch = qbDoc.options.find(o =>
+                            (o._id && o._id.toString() === studentAnsText) ||
+                            (typeof o === 'string' && o === studentAnsText) ||
+                            o.text === studentAnsText
+                        );
+                        if (optMatch) {
+                            studentAnsText = typeof optMatch === 'string' ? optMatch : optMatch.text;
+                        }
+                    }
+                }
+
+                const isCorrect = studentAnsText && correctAnsText &&
+                    (studentAnsText.trim().toLowerCase() === correctAnsText.trim().toLowerCase());
+
+                return {
+                    question_id: qs.question_id,
+                    question_text: qs.question_text || qbDoc?.question_text || '',
+                    type: qs.type || qbDoc?.type || 'multiple_choice',
+                    correct_answer: correctAnsText,
+                    student_answer: studentAnsText,
+                    marks: qs.marks || 1,
+                    is_correct: isCorrect,
+                    options: qbDoc?.options || []
+                };
+            });
+
             return {
                 id: r._id,
                 student_id: sId,
@@ -6604,7 +6669,7 @@ app.get('/api/instructor/student-results', authenticateToken, async (req, res) =
                 test_title: r.test_title || r.exam_id?.title || r.mock_paper_id?.title || 'Mock Test',
                 exam_type: r.exam_id?.exam_type || 'mock',
                 score: r.score,
-                total_questions: r.total_questions || r.questions_snapshot?.length || 0,
+                total_questions: r.total_questions || resolvedSnapshot.length || 0,
                 total_marks: r.exam_id?.total_marks || r.total_questions || 0,
                 passing_marks: passingMarks,
                 percentage,
@@ -6612,8 +6677,8 @@ app.get('/api/instructor/student-results', authenticateToken, async (req, res) =
                 grading_status: r.grading_status || 'graded',
                 time_spent: r.time_spent || 0,
                 submitted_at: r.submitted_at,
-                questions_count: r.questions_snapshot?.length || r.total_questions || 0,
-                questions_snapshot: r.questions_snapshot || []
+                questions_count: resolvedSnapshot.length || r.total_questions || 0,
+                questions_snapshot: resolvedSnapshot
             };
         });
 
