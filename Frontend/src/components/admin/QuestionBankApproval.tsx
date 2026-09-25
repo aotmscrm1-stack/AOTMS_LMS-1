@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useCourses } from '@/hooks/useManagerData';
+import { useAuth } from '@/hooks/useAuth';
+import { useInstructorAllStudents } from '@/hooks/useInstructorData';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { SyncDataButton } from "./data/SyncDataButton";
@@ -131,6 +133,11 @@ interface QuestionBankApprovalProps {
 }
 
 export function QuestionBankApproval({ onSync, loading: externalLoading, mode }: QuestionBankApprovalProps) {
+    const { user, userRole } = useAuth();
+    const isInstructor = mode === "instructor" || userRole === "instructor";
+    const { data: instructorStudents = [], isLoading: loadingInstructorStudents } = useInstructorAllStudents();
+    const currentUserId = (user?.id || (user as any)?._id)?.toString();
+
     const getImageSrc = (path?: string | null) => {
         if (!path) return null;
         if (path.startsWith('http')) return path;
@@ -164,6 +171,22 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [selectedStudentId, setSelectedStudentId] = useState("");
     const [isGranting, setIsGranting] = useState(false);
+
+    const isStudentLoading = isInstructor ? loadingInstructorStudents : loadingStudents;
+
+    // Assigned students for instructor mode, otherwise all students for admin
+    const displayStudents = useMemo(() => {
+        if (isInstructor) {
+            return instructorStudents.map((s) => ({
+                id: (s.userId || s.id)?.toString(),
+                full_name: s.name,
+                email: s.email,
+                avatar_url: s.avatarUrl,
+                college_name: s.courseEnrollments?.[0]?.courseTitle || "Assigned Student"
+            }));
+        }
+        return students;
+    }, [isInstructor, instructorStudents, students]);
 
     const [grantType, setGrantType] = useState<'student' | 'batch' | 'college'>('student');
     const [batches, setBatches] = useState<Batch[]>([]);
@@ -224,12 +247,14 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
 
     useEffect(() => {
         fetchPendingBanks();
-        fetchStudents();
-        fetchInstructors();
+        if (!isInstructor) {
+            fetchStudents();
+            fetchInstructors();
+        }
         const interval = setInterval(() => fetchPendingBanks(), 15000);
         return () => clearInterval(interval);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [isInstructor]);
 
     useEffect(() => {
         if (selectedBatchId && grantType === 'batch') {
@@ -274,6 +299,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
     };
 
     const fetchStudents = async () => {
+        if (isInstructor) return;
         setLoadingStudents(true);
         try {
             const res = await fetchWithAuth('/admin/students') as Student[];
@@ -382,7 +408,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
         setGrantType('student');
         setSelectedStudentId("");
         setSelectedBatchId("");
-        setSelectedInstructorId("all");
+        setSelectedInstructorId(isInstructor ? (currentUserId || "all") : "all");
         setSelectedBatchTypeFilter("all");
         setSelectedCollege("all");
         setSelectedCollegeStudents([]);
@@ -403,6 +429,16 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
     const filteredBatches = useMemo(() => {
         if (!batches || batches.length === 0) return [];
 
+        if (isInstructor) {
+            return batches.filter(b => {
+                const inst = b.instructor;
+                const batchInstructorId = (b.instructor_id || (typeof inst === 'object' ? (inst?._id || inst?.id) : inst))?.toString();
+                const isMyBatch = batchInstructorId === currentUserId;
+                const matchesType = selectedBatchTypeFilter === 'all' || b.batch_type === selectedBatchTypeFilter;
+                return isMyBatch && matchesType;
+            });
+        }
+
         const filtered = batches.filter(b => {
             const inst = b.instructor;
             const batchInstructorId = (b.instructor_id || (typeof inst === 'object' ? (inst?._id || inst?.id) : inst))?.toString();
@@ -416,7 +452,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
         // "REMOVE CONCEPT" of empty states: If filtering returns nothing but we have batches, 
         // fallback to just showing all batches so the user can actually select something.
         return filtered.length > 0 ? filtered : batches;
-    }, [batches, selectedInstructorId, selectedBatchTypeFilter]);
+    }, [batches, selectedInstructorId, selectedBatchTypeFilter, isInstructor, currentUserId]);
 
     const handleGrantAccess = async () => {
         if (!grantingTopic) return;
@@ -877,7 +913,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                     <ScrollArea className="flex-1 overflow-y-auto pr-1">
                         <div className="p-8 space-y-8 bg-white relative">
                             <Tabs value={grantType} onValueChange={(v) => setGrantType(v as 'student' | 'batch' | 'college')} className="w-full">
-                                <TabsList className="grid grid-cols-3 mb-8 bg-slate-50 p-1.5 rounded-3xl border border-slate-100 h-12">
+                                <TabsList className={cn("mb-8 bg-slate-50 p-1.5 rounded-3xl border border-slate-100 h-12", isInstructor ? "grid grid-cols-2" : "grid grid-cols-3")}>
                                     <TabsTrigger
                                         value="student"
                                         className="rounded-xl data-[state=active]:bg-white data-[state=active]:shadow-lg data-[state=active]:text-primary font-black text-[9px] uppercase tracking-[0.1em] transition-all"
@@ -890,12 +926,14 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                     >
                                         Batch
                                     </TabsTrigger>
-                                    <TabsTrigger
-                                        value="college"
-                                        className="rounded-xl data-[state=active]:bg-white data-[state=active]:shadow-lg data-[state=active]:text-primary font-black text-[9px] uppercase tracking-[0.1em] transition-all"
-                                    >
-                                        College
-                                    </TabsTrigger>
+                                    {!isInstructor && (
+                                        <TabsTrigger
+                                            value="college"
+                                            className="rounded-xl data-[state=active]:bg-white data-[state=active]:shadow-lg data-[state=active]:text-primary font-black text-[9px] uppercase tracking-[0.1em] transition-all"
+                                        >
+                                            College
+                                        </TabsTrigger>
+                                    )}
                                 </TabsList>
 
                                 <TabsContent value="student" className="space-y-6 mt-0 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -908,7 +946,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                                 <SelectValue placeholder="Search for a student..." />
                                             </SelectTrigger>
                                             <SelectContent className="rounded-3xl border-slate-200 shadow-[0_10px_40px_rgba(0,0,0,0.1)] max-h-[320px] p-2">
-                                                {students.map((student) => (
+                                                {displayStudents.map((student) => (
                                                     <SelectItem
                                                         key={student.id}
                                                         value={student.id}
@@ -917,7 +955,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                                         <div className="flex items-center gap-3">
                                                             <Avatar className="h-8 w-8 border border-white shadow-sm">
                                                                 <AvatarImage src={student.avatar_url} />
-                                                                <AvatarFallback className="bg-slate-100 text-[10px] font-black">{student.full_name.charAt(0)}</AvatarFallback>
+                                                                <AvatarFallback className="bg-slate-100 text-[10px] font-black">{student.full_name?.charAt(0) || 'S'}</AvatarFallback>
                                                             </Avatar>
                                                             <div className="flex flex-col">
                                                                 <span className="text-xs leading-none">{student.full_name}</span>
@@ -926,9 +964,11 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                                         </div>
                                                     </SelectItem>
                                                 ))}
-                                                {students.length === 0 && (
+                                                {displayStudents.length === 0 && (
                                                     <div className="p-8 text-center">
-                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">No students found</p>
+                                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                                                            {isStudentLoading ? "Loading assigned students..." : "No assigned students found"}
+                                                        </p>
                                                     </div>
                                                 )}
                                             </SelectContent>
@@ -937,26 +977,43 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                 </TabsContent>
 
                                 <TabsContent value="batch" className="space-y-6 mt-0 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Instructor</Label>
-                                            <Select value={selectedInstructorId} onValueChange={setSelectedInstructorId}>
-                                                <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50/50 focus:ring-primary/20 font-bold text-slate-700">
-                                                    <SelectValue placeholder="All Instructors" />
-                                                </SelectTrigger>
-                                                <SelectContent className="rounded-3xl border-slate-200 shadow-xl p-1">
-                                                    <SelectItem value="all" className="font-bold rounded-lg mb-1">Show All</SelectItem>
-                                                    {instructors.map((inst) => (
-                                                        <SelectItem key={inst.id} value={inst.id?.toString()} className="font-bold rounded-lg mb-1 py-2">{inst.full_name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                    {!isInstructor ? (
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <Label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Instructor</Label>
+                                                <Select value={selectedInstructorId} onValueChange={setSelectedInstructorId}>
+                                                    <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50/50 focus:ring-primary/20 font-bold text-slate-700">
+                                                        <SelectValue placeholder="All Instructors" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="rounded-3xl border-slate-200 shadow-xl p-1">
+                                                        <SelectItem value="all" className="font-bold rounded-lg mb-1">Show All</SelectItem>
+                                                        {instructors.map((inst) => (
+                                                            <SelectItem key={inst.id} value={inst.id?.toString()} className="font-bold rounded-lg mb-1 py-2">{inst.full_name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Batch Schedule</Label>
+                                                <Select value={selectedBatchTypeFilter} onValueChange={setSelectedBatchTypeFilter}>
+                                                    <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50/50 focus:ring-primary/20 font-bold text-slate-700">
+                                                        <SelectValue placeholder="Any Time" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="rounded-3xl border-slate-200 shadow-xl p-1">
+                                                        <SelectItem value="all" className="font-bold rounded-lg mb-1 uppercase text-[10px]">All Slots</SelectItem>
+                                                        <SelectItem value="morning" className="font-bold rounded-lg mb-1 text-xs">Morning</SelectItem>
+                                                        <SelectItem value="afternoon" className="font-bold rounded-lg mb-1 text-xs">Afternoon</SelectItem>
+                                                        <SelectItem value="evening" className="font-bold rounded-lg mb-1 text-xs">Evening</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
                                         </div>
+                                    ) : (
                                         <div className="space-y-2">
-                                            <Label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Batch Schedule</Label>
+                                            <Label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Filter by Schedule</Label>
                                             <Select value={selectedBatchTypeFilter} onValueChange={setSelectedBatchTypeFilter}>
                                                 <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50/50 focus:ring-primary/20 font-bold text-slate-700">
-                                                    <SelectValue placeholder="Any Time" />
+                                                    <SelectValue placeholder="All Slots" />
                                                 </SelectTrigger>
                                                 <SelectContent className="rounded-3xl border-slate-200 shadow-xl p-1">
                                                     <SelectItem value="all" className="font-bold rounded-lg mb-1 uppercase text-[10px]">All Slots</SelectItem>
@@ -966,9 +1023,9 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                                 </SelectContent>
                                             </Select>
                                         </div>
-                                    </div>
+                                    )}
 
-                                    {(selectedInstructorId !== "all" || selectedBatchTypeFilter !== "all" || instructors.length > 0) && (
+                                    {(isInstructor || selectedInstructorId !== "all" || selectedBatchTypeFilter !== "all" || instructors.length > 0) && (
                                         <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                                             <Label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-1 flex items-center gap-2">
                                                 Select Batch
@@ -985,7 +1042,9 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                                     </SelectTrigger>
                                                     <SelectContent className="rounded-3xl border-slate-200 shadow-xl max-h-[300px] p-2">
                                                         {filteredBatches.length === 0 ? (
-                                                            <div className="p-8 text-center text-[10px] font-black text-slate-300 uppercase italic tracking-widest">No matching batches</div>
+                                                            <div className="p-8 text-center text-[10px] font-black text-slate-300 uppercase italic tracking-widest">
+                                                                {isInstructor ? "No batches assigned to you" : "No matching batches"}
+                                                            </div>
                                                         ) : (
                                                             filteredBatches.map((batch) => {
                                                                 const bId = (batch.id || batch._id)?.toString();
@@ -1006,7 +1065,7 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                                                             </div>
                                                                             <div className="flex items-center gap-2 opacity-50">
                                                                                 <span className="text-[8px] h-3.5 px-1 uppercase font-black tracking-tight">{batch.batch_type}</span>
-                                                                                {batch.instructor_name && <span className="text-[8px] font-black truncate w-24">/ {batch.instructor_name}</span>}
+                                                                                {!isInstructor && batch.instructor_name && <span className="text-[8px] font-black truncate w-24">/ {batch.instructor_name}</span>}
                                                                             </div>
                                                                         </div>
                                                                     </SelectItem>
@@ -1068,100 +1127,102 @@ export function QuestionBankApproval({ onSync, loading: externalLoading, mode }:
                                     )}
                                 </TabsContent>
 
-                                <TabsContent value="college" className="space-y-6 mt-0 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                    <div className="space-y-3">
-                                        <Label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-1">
-                                            Select College
-                                        </Label>
-                                        <Select value={selectedCollege} onValueChange={(val) => {
-                                            setSelectedCollege(val);
-                                            // Reset selected students when college changes
-                                            setSelectedCollegeStudents([]);
-                                        }}>
-                                            <SelectTrigger className="h-14 rounded-3xl border-slate-200 bg-slate-50/50 focus:ring-primary/20 font-bold text-slate-700 transition-all hover:bg-white hover:shadow-md">
-                                                <SelectValue placeholder="Select a college..." />
-                                            </SelectTrigger>
-                                            <SelectContent className="rounded-3xl border-slate-200 shadow-xl max-h-[250px] p-2">
-                                                <SelectItem value="all" className="font-bold py-3 rounded-xl mb-1">Show All Students</SelectItem>
-                                                {Array.from(new Set(students.map(s => s.college_name || s.profile?.college_name).filter(Boolean))).map((college) => (
-                                                    <SelectItem key={college} value={college!} className="font-bold py-3 rounded-xl mb-1">
-                                                        {college}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    {selectedCollege && (
-                                        <div className="space-y-4 pt-6 border-t border-slate-100 animate-in fade-in slide-in-from-bottom-2 duration-500 mt-6 relative">
-                                            <div className="flex items-center justify-between px-1">
-                                                <Label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
-                                                    Students ({students.filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege).length})
-                                                </Label>
-                                                <Button 
-                                                    variant="ghost" 
-                                                    size="sm"
-                                                    className="h-6 text-[8px] font-black uppercase tracking-widest text-primary hover:bg-primary/5"
-                                                    onClick={() => {
-                                                        const filtered = students.filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege);
-                                                        if (selectedCollegeStudents.length === filtered.length) {
-                                                            setSelectedCollegeStudents([]);
-                                                        } else {
-                                                            setSelectedCollegeStudents(filtered.map(s => s.id));
-                                                        }
-                                                    }}
-                                                >
-                                                    {selectedCollegeStudents.length === students.filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege).length 
-                                                        ? 'Deselect All' : 'Select All'}
-                                                </Button>
-                                            </div>
-
-                                            <ScrollArea className="h-[200px] rounded-[2rem] border border-slate-100 bg-slate-50/30 p-4">
-                                                <div className="grid grid-cols-1 gap-2">
-                                                    {students
-                                                        .filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege)
-                                                        .map((s) => (
-                                                            <div
-                                                                key={s.id}
-                                                                onClick={() => {
-                                                                    setSelectedCollegeStudents(prev => 
-                                                                        prev.includes(s.id) 
-                                                                            ? prev.filter(id => id !== s.id) 
-                                                                            : [...prev, s.id]
-                                                                    );
-                                                                }}
-                                                                className={cn(
-                                                                    "flex items-center gap-4 p-3 rounded-2xl border transition-all cursor-pointer group",
-                                                                    selectedCollegeStudents.includes(s.id)
-                                                                        ? "bg-primary/5 border-primary/30 shadow-sm"
-                                                                        : "bg-white border-slate-100 hover:border-primary/20"
-                                                                )}
-                                                            >
-                                                                <div className={cn(
-                                                                    "h-6 w-6 rounded-lg border-2 flex items-center justify-center transition-all",
-                                                                    selectedCollegeStudents.includes(s.id)
-                                                                        ? "bg-primary border-primary"
-                                                                        : "border-slate-200 group-hover:border-primary/30"
-                                                                )}>
-                                                                    {selectedCollegeStudents.includes(s.id) && <CheckCircle className="h-4 w-4 text-white" />}
-                                                                </div>
-                                                                <Avatar className="h-8 w-8 border-white shadow-sm shrink-0">
-                                                                    <AvatarImage src={s.avatar_url || s.profile?.avatar_url} />
-                                                                    <AvatarFallback className="text-[10px] font-black bg-slate-100">{(s.full_name || 'S').charAt(0)}</AvatarFallback>
-                                                                </Avatar>
-                                                                <div className="flex flex-col min-w-0 flex-1">
-                                                                    <span className="text-[11px] font-bold text-slate-800 truncate">{s.full_name}</span>
-                                                                    <span className="text-[9px] text-slate-400 truncate opacity-70">
-                                                                        {s.email} {s.college_name || s.profile?.college_name ? `• ${s.college_name || s.profile?.college_name}` : ''}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                </div>
-                                            </ScrollArea>
+                                {!isInstructor && (
+                                    <TabsContent value="college" className="space-y-6 mt-0 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                                        <div className="space-y-3">
+                                            <Label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-1">
+                                                Select College
+                                            </Label>
+                                            <Select value={selectedCollege} onValueChange={(val) => {
+                                                setSelectedCollege(val);
+                                                // Reset selected students when college changes
+                                                setSelectedCollegeStudents([]);
+                                            }}>
+                                                <SelectTrigger className="h-14 rounded-3xl border-slate-200 bg-slate-50/50 focus:ring-primary/20 font-bold text-slate-700 transition-all hover:bg-white hover:shadow-md">
+                                                    <SelectValue placeholder="Select a college..." />
+                                                </SelectTrigger>
+                                                <SelectContent className="rounded-3xl border-slate-200 shadow-xl max-h-[250px] p-2">
+                                                    <SelectItem value="all" className="font-bold py-3 rounded-xl mb-1">Show All Students</SelectItem>
+                                                    {Array.from(new Set(students.map(s => s.college_name || s.profile?.college_name).filter(Boolean))).map((college) => (
+                                                        <SelectItem key={college} value={college!} className="font-bold py-3 rounded-xl mb-1">
+                                                            {college}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
-                                    )}
-                                </TabsContent>
+
+                                        {selectedCollege && (
+                                            <div className="space-y-4 pt-6 border-t border-slate-100 animate-in fade-in slide-in-from-bottom-2 duration-500 mt-6 relative">
+                                                <div className="flex items-center justify-between px-1">
+                                                    <Label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                                                        Students ({students.filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege).length})
+                                                    </Label>
+                                                    <Button 
+                                                        variant="ghost" 
+                                                        size="sm"
+                                                        className="h-6 text-[8px] font-black uppercase tracking-widest text-primary hover:bg-primary/5"
+                                                        onClick={() => {
+                                                            const filtered = students.filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege);
+                                                            if (selectedCollegeStudents.length === filtered.length) {
+                                                                setSelectedCollegeStudents([]);
+                                                            } else {
+                                                                setSelectedCollegeStudents(filtered.map(s => s.id));
+                                                            }
+                                                        }}
+                                                    >
+                                                        {selectedCollegeStudents.length === students.filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege).length 
+                                                            ? 'Deselect All' : 'Select All'}
+                                                    </Button>
+                                                </div>
+
+                                                <ScrollArea className="h-[200px] rounded-[2rem] border border-slate-100 bg-slate-50/30 p-4">
+                                                    <div className="grid grid-cols-1 gap-2">
+                                                        {students
+                                                            .filter(s => selectedCollege === 'all' || (s.college_name || s.profile?.college_name) === selectedCollege)
+                                                            .map((s) => (
+                                                                <div
+                                                                    key={s.id}
+                                                                    onClick={() => {
+                                                                        setSelectedCollegeStudents(prev => 
+                                                                            prev.includes(s.id) 
+                                                                                ? prev.filter(id => id !== s.id) 
+                                                                                : [...prev, s.id]
+                                                                        );
+                                                                    }}
+                                                                    className={cn(
+                                                                        "flex items-center gap-4 p-3 rounded-2xl border transition-all cursor-pointer group",
+                                                                        selectedCollegeStudents.includes(s.id)
+                                                                            ? "bg-primary/5 border-primary/30 shadow-sm"
+                                                                            : "bg-white border-slate-100 hover:border-primary/20"
+                                                                    )}
+                                                                >
+                                                                    <div className={cn(
+                                                                        "h-6 w-6 rounded-lg border-2 flex items-center justify-center transition-all",
+                                                                        selectedCollegeStudents.includes(s.id)
+                                                                            ? "bg-primary border-primary"
+                                                                            : "border-slate-200 group-hover:border-primary/30"
+                                                                    )}>
+                                                                        {selectedCollegeStudents.includes(s.id) && <CheckCircle className="h-4 w-4 text-white" />}
+                                                                    </div>
+                                                                    <Avatar className="h-8 w-8 border-white shadow-sm shrink-0">
+                                                                        <AvatarImage src={s.avatar_url || s.profile?.avatar_url} />
+                                                                        <AvatarFallback className="text-[10px] font-black bg-slate-100">{(s.full_name || 'S').charAt(0)}</AvatarFallback>
+                                                                    </Avatar>
+                                                                    <div className="flex flex-col min-w-0 flex-1">
+                                                                        <span className="text-[11px] font-bold text-slate-800 truncate">{s.full_name}</span>
+                                                                        <span className="text-[9px] text-slate-400 truncate opacity-70">
+                                                                            {s.email} {s.college_name || s.profile?.college_name ? `• ${s.college_name || s.profile?.college_name}` : ''}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                    </div>
+                                                </ScrollArea>
+                                            </div>
+                                        )}
+                                    </TabsContent>
+                                )}
                             </Tabs>
                             
                             <div className="p-6 rounded-[1.5rem] bg-emerald-50/30 border border-emerald-500/10 space-y-3 relative overflow-hidden group">
