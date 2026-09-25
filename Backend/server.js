@@ -5654,9 +5654,11 @@ app.get('/api/student/exam-questions/:id', authenticateToken, async (req, res) =
         if (isQB) {
             const topic = id.replace('qb_', '').trim();
             const escapedTopic = topic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // Strict anchored regex to prevent partial match collisions (e.g. "TEST" matching "Data Analytics Test" or "Testing")
             questions = await QuestionBank.find({
                 $or: [
-                    { topic: { $regex: new RegExp(escapedTopic, "i") } },
+                    { topic: { $regex: new RegExp(`^${escapedTopic}$`, "i") } },
+                    { topic: topic },
                     { course_id: mongoose.Types.ObjectId.isValid(topic) ? topic : null }
                 ]
             }).lean();
@@ -5672,34 +5674,66 @@ app.get('/api/student/exam-questions/:id', authenticateToken, async (req, res) =
             if (source && (source.questions || []).length > 0) {
                 questions = source.questions || [];
             } else {
+                // Check if this student has an explicit grant record with an assigned topic
+                let grantedTopic = null;
+                if (req.user?.id && mongoose.Types.ObjectId.isValid(cleanId)) {
+                    const access = await StudentExamAccess.findOne({
+                        student_id: req.user.id,
+                        $or: [{ exam_id: cleanId }, { mock_paper_id: cleanId }]
+                    }).select('question_bank_topic').lean();
+                    if (access && access.question_bank_topic) {
+                        grantedTopic = access.question_bank_topic.trim();
+                    }
+                }
+
                 // Try as Exam (Modern Unified Flow)
                 const exam = mongoose.Types.ObjectId.isValid(cleanId)
                     ? await Exam.findById(cleanId).lean()
                     : null;
 
                 if (exam) {
-                    // Fetch STRICTLY by topics array, exam title, or exam_id
-                    const searchTopics = (exam.topics && exam.topics.length > 0)
-                        ? exam.topics
-                        : [exam.title];
+                    const candidateTopics = [];
+                    if (grantedTopic) candidateTopics.push(grantedTopic);
+                    if (exam.topics && Array.isArray(exam.topics) && exam.topics.length > 0) {
+                        candidateTopics.push(...exam.topics.map(t => t.trim()));
+                    }
+                    if (exam.source_topic && exam.source_topic.trim()) {
+                        candidateTopics.push(exam.source_topic.trim());
+                    }
+                    if (exam.title && exam.title.trim()) {
+                        candidateTopics.push(exam.title.trim());
+                    }
 
-                    const topicRegexes = searchTopics.map(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+                    const uniqueTopics = [...new Set(candidateTopics.filter(Boolean))];
+                    // Strict anchored exact regexes to ensure ONLY the intended questions are retrieved
+                    const exactTopicRegexes = uniqueTopics.map(t => new RegExp(`^${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'));
 
                     questions = await QuestionBank.find({
                         $or: [
-                            { topic: { $in: topicRegexes } },
-                            { topic: { $in: searchTopics } },
                             { exam_id: exam._id },
-                            { exam_id: exam._id.toString() }
+                            { exam_id: exam._id.toString() },
+                            { topic: { $in: exactTopicRegexes } },
+                            { topic: { $in: uniqueTopics } }
                         ]
-                    })
-                    .limit(exam.total_questions || 50)
-                    .lean();
+                    }).lean();
+
+                    // Fallback only if exact match found 0 questions
+                    if (questions.length === 0 && uniqueTopics.length > 0) {
+                        const looseRegexes = uniqueTopics.map(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+                        questions = await QuestionBank.find({ topic: { $in: looseRegexes } }).lean();
+                    }
+
+                    if (exam.total_questions && exam.total_questions > 0) {
+                        questions = questions.slice(0, exam.total_questions);
+                    }
                 } else {
                     // Try cleanId as a direct topic name
                     const escapedId = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     questions = await QuestionBank.find({
-                        topic: { $regex: new RegExp(escapedId, "i") }
+                        $or: [
+                            { topic: { $regex: new RegExp(`^${escapedId}$`, "i") } },
+                            { topic: cleanId }
+                        ]
                     }).lean();
                 }
             }
