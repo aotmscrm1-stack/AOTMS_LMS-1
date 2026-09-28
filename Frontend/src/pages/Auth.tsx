@@ -1411,6 +1411,7 @@ export default function Auth() {
                                   placeholder="e.g. KL University"
                                   className="pl-10 h-11 bg-slate-50 border-slate-200 rounded-xl focus:ring-4 focus:ring-[#0075CF]/10 transition-all"
                                   list="college-suggestions"
+                                  autoComplete="off"
                                   onFocus={() => setIsTyping(true)}
                                   onBlur={() => setIsTyping(false)}
                                   {...field}

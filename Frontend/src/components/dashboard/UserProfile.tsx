@@ -11,6 +11,7 @@ import { Loader2, Save, Upload, Github, Briefcase, Copy, CheckCircle, ExternalLi
 import { Textarea } from '@/components/ui/textarea';
 import { useRef } from 'react';
 import { fetchWithAuth, API_URL } from '@/lib/api';
+import { COLLEGES } from '@/pages/Auth';
 
 interface ProfileData {
     id: string;
@@ -376,8 +377,15 @@ export function UserProfile() {
                                         id="collegeName"
                                         placeholder="e.g. Loyola Institute of Technology and Management (LITAM)"
                                         value={profile.college_name || ''}
+                                        autoComplete="off"
+                                        list="user-profile-college-suggestions"
                                         onChange={(e) => setProfile({ ...profile, college_name: e.target.value })}
                                     />
+                                    <datalist id="user-profile-college-suggestions">
+                                        {COLLEGES.map((c) => (
+                                            <option key={c} value={c} />
+                                        ))}
+                                    </datalist>
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="instituteName">Company Name</Label>

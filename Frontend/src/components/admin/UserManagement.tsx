@@ -66,12 +66,14 @@ import {
   ChevronDown,
   ChevronUp,
   Check,
-  X
+  X,
+  Phone
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -169,6 +171,19 @@ export function UserManagement({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [suspensionDays, setSuspensionDays] = useState("7");
 
+  // Bulk Approval States
+  const [showBulkApprovalDialog, setShowBulkApprovalDialog] = useState(false);
+  const [selectedPendingUserIds, setSelectedPendingUserIds] = useState<Set<string>>(new Set());
+  const [bulkSearchQuery, setBulkSearchQuery] = useState("");
+  const [bulkCollegeFilter, setBulkCollegeFilter] = useState("all");
+  const [bulkTargetRole, setBulkTargetRole] = useState("keep");
+  const [bulkTargetCourseType, setBulkTargetCourseType] = useState("keep");
+  const [bulkTargetCollege, setBulkTargetCollege] = useState("keep");
+  const [bulkTargetCourseProgramme, setBulkTargetCourseProgramme] = useState("keep");
+  const [bulkTargetBatch, setBulkTargetBatch] = useState("keep");
+  const [availableCourses, setAvailableCourses] = useState<{ id: string; title: string }[]>([]);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
   // Edit Profile States
   const [showEditProfileDialog, setShowEditProfileDialog] = useState(false);
   const [editFullName, setEditFullName] = useState("");
@@ -177,6 +192,204 @@ export function UserManagement({
   const [editMobileNumber, setEditMobileNumber] = useState("");
   const [editCourseType, setEditCourseType] = useState("full_time");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Helper to open Edit Profile Dialog for any user
+  const openEditProfileForUser = (user: Profile) => {
+    setSelectedUser(user);
+    setEditFullName(user.full_name || "");
+    setEditCollegeName((user.college_name || (user as any).college_name || "").trim());
+    setEditInstituteName((user.institute_name || (user as any).institute_name || "").trim());
+    setEditMobileNumber((user.mobile_number || (user as any).phone || "").trim());
+    setEditCourseType((user.course_type || (user as any).course_type || "full_time"));
+    setIsCollegeDropdownOpen(false);
+    setShowEditProfileDialog(true);
+  };
+
+  // Pending users computation
+  const pendingUsers = useMemo(() => {
+    return users.filter(u => u.approval_status === 'pending' || u.status === 'pending');
+  }, [users]);
+
+  // Filtered pending users in bulk modal
+  const filteredPendingUsers = useMemo(() => {
+    return pendingUsers.filter(u => {
+      const q = bulkSearchQuery.trim().toLowerCase();
+      const matchesSearch = !q || (
+        (u.full_name || "").toLowerCase().includes(q) ||
+        (u.email || "").toLowerCase().includes(q) ||
+        (u.college_name || "").toLowerCase().includes(q) ||
+        (u.mobile_number || (u as any).phone || "").toLowerCase().includes(q)
+      );
+      const matchesCollege = bulkCollegeFilter === "all" || (u.college_name || "").trim() === bulkCollegeFilter.trim();
+      return matchesSearch && matchesCollege;
+    });
+  }, [pendingUsers, bulkSearchQuery, bulkCollegeFilter]);
+
+  // Unique colleges in pending list
+  const pendingColleges = useMemo(() => {
+    const set = new Set<string>();
+    pendingUsers.forEach(u => {
+      if (u.college_name && u.college_name.trim()) set.add(u.college_name.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [pendingUsers]);
+
+  // Toggle selection for single user
+  const toggleSelectUser = (userId: string) => {
+    setSelectedPendingUserIds(prev => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  // Toggle select all filtered users
+  const isAllFilteredSelected = filteredPendingUsers.length > 0 && filteredPendingUsers.every(u => selectedPendingUserIds.has(u.id));
+  const toggleSelectAllFiltered = () => {
+    if (isAllFilteredSelected) {
+      setSelectedPendingUserIds(prev => {
+        const next = new Set(prev);
+        filteredPendingUsers.forEach(u => next.delete(u.id));
+        return next;
+      });
+    } else {
+      setSelectedPendingUserIds(prev => {
+        const next = new Set(prev);
+        filteredPendingUsers.forEach(u => next.add(u.id));
+        return next;
+      });
+    }
+  };
+
+  // Fetch available courses list for bulk assignment
+  useEffect(() => {
+    fetchWithAuth<any[]>('/public/courses')
+      .then(data => {
+        if (Array.isArray(data)) {
+          setAvailableCourses(data.map(c => ({
+            id: c.id || c._id || c.slug,
+            title: c.title || c.name || "Untitled Course"
+          })));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Automatic sync handlers for Bulk Select Options
+  const handleBulkCourseTypeChange = (val: string) => {
+    setBulkTargetCourseType(val);
+    if (val === "internship" || val === "internship_student") {
+      setBulkTargetRole("intern");
+    } else if (val === "full_time") {
+      setBulkTargetRole("student");
+    }
+  };
+
+  const handleBulkCourseProgrammeChange = (val: string) => {
+    setBulkTargetCourseProgramme(val);
+    if (val !== "keep") {
+      const lower = val.toLowerCase();
+      if (lower.includes("intern") || lower.includes("internship")) {
+        setBulkTargetCourseType("internship");
+        setBulkTargetRole("intern");
+      } else if (lower.includes("full") || lower.includes("student")) {
+        setBulkTargetCourseType("full_time");
+        setBulkTargetRole("student");
+      }
+    }
+  };
+
+  // Dynamic Batches list based on selected Course Programme
+  const availableBatches = useMemo(() => {
+    if (bulkTargetCourseProgramme !== "keep") {
+      return [
+        "keep",
+        `${bulkTargetCourseProgramme} - Batch A`,
+        `${bulkTargetCourseProgramme} - Batch B`,
+        "Batch 1 (Morning)",
+        "Batch 2 (Evening)",
+        "Weekend Batch",
+        "Fast-Track Batch"
+      ];
+    }
+    return [
+      "keep",
+      "Batch 1 (Morning)",
+      "Batch 2 (Evening)",
+      "2026 Batch A",
+      "2026 Batch B",
+      "Weekend Batch",
+      "Fast-Track Internship Batch"
+    ];
+  }, [bulkTargetCourseProgramme]);
+
+  // Bulk Approve / Reject handler
+  const handleBulkApprove = async (targetStatus: "approved" | "rejected" = "approved") => {
+    if (selectedPendingUserIds.size === 0) {
+      toast.error("Please select at least one user to proceed.");
+      return;
+    }
+    const ids = Array.from(selectedPendingUserIds);
+    setIsBulkProcessing(true);
+    try {
+      const body: any = {
+        userIds: ids,
+        status: targetStatus
+      };
+      if (bulkTargetRole !== "keep") {
+        body.role = bulkTargetRole;
+      }
+      if (bulkTargetCourseType !== "keep") {
+        body.course_type = bulkTargetCourseType;
+      }
+      if (bulkTargetCollege !== "keep") {
+        body.college_name = bulkTargetCollege;
+      }
+      if (bulkTargetCourseProgramme !== "keep") {
+        body.course_title = bulkTargetCourseProgramme;
+      }
+      if (bulkTargetBatch !== "keep") {
+        body.batch_name = bulkTargetBatch;
+      }
+
+      await fetchWithAuth('/admin/bulk-update-user-status', {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+
+      toast.success(`Successfully ${targetStatus === 'approved' ? 'approved' : 'rejected'} ${ids.length} users!`);
+
+      // Optimistically update local state
+      ids.forEach(id => {
+        const u = users.find(x => x.id === id);
+        if (u) {
+          u.approval_status = targetStatus;
+          if (bulkTargetRole !== "keep") u.role = bulkTargetRole as any;
+          if (bulkTargetCourseType !== "keep") u.course_type = bulkTargetCourseType;
+          if (bulkTargetCollege !== "keep") u.college_name = bulkTargetCollege;
+        }
+      });
+
+      setSelectedPendingUserIds(new Set());
+      setShowBulkApprovalDialog(false);
+      if (onSync) onSync();
+    } catch (err: any) {
+      try {
+        for (const id of ids) {
+          await onUpdateStatus(id, targetStatus);
+        }
+        toast.success(`Updated ${ids.length} users successfully!`);
+        setSelectedPendingUserIds(new Set());
+        setShowBulkApprovalDialog(false);
+        if (onSync) onSync();
+      } catch (e: any) {
+        toast.error(err.message || 'Bulk status update failed');
+      }
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
 
   // College Dropdown States
   const [isCollegeDropdownOpen, setIsCollegeDropdownOpen] = useState(false);
@@ -210,23 +423,14 @@ export function UserManagement({
     };
   }, []);
 
-  // Combined College list: Auth.tsx COLLEGES + serverColleges + users' college_name
+  // Strict College list: COLLEGES array from Auth.tsx only
   const allCollegeList = useMemo(() => {
     const set = new Set<string>();
-    // 1. COLLEGES from Auth.tsx
     COLLEGES.forEach(c => {
       if (c && c.trim()) set.add(c.trim());
     });
-    // 2. Server colleges
-    serverColleges.forEach(c => {
-      if (c && c.trim()) set.add(c.trim());
-    });
-    // 3. User profiles colleges
-    users.forEach(u => {
-      if (u.college_name && u.college_name.trim()) set.add(u.college_name.trim());
-    });
     return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  }, [serverColleges, users]);
+  }, []);
 
   // Filtered colleges for combobox dropdown
   const filteredColleges = useMemo(() => {
@@ -580,6 +784,25 @@ export function UserManagement({
                 </SelectContent>
               </Select>
 
+              {/* Bulk Approval Button */}
+              <Button
+                type="button"
+                onClick={() => {
+                  const pIds = users.filter(u => u.approval_status === 'pending' || u.status === 'pending').map(u => u.id);
+                  setSelectedPendingUserIds(new Set(pIds));
+                  setShowBulkApprovalDialog(true);
+                }}
+                className="h-10 px-4 rounded-xl font-bold text-xs uppercase tracking-tight bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-md shadow-amber-500/20 flex items-center gap-2 transition-all active:scale-95 shrink-0"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                <span>Bulk Approval</span>
+                {pendingUsers.length > 0 && (
+                  <span className="bg-white text-orange-600 font-black px-1.5 py-0.5 text-[10px] rounded-full leading-none shadow-sm">
+                    {pendingUsers.length}
+                  </span>
+                )}
+              </Button>
+
               {onSync && (
                 <div className="flex items-center gap-2">
                   <div className="h-6 w-[1px] bg-slate-200 mx-1 hidden sm:block" />
@@ -729,16 +952,7 @@ export function UserManagement({
                             )}
                             Send Notification Mail
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => {
-                            setSelectedUser(user);
-                            setEditFullName(user.full_name || "");
-                            setEditCollegeName((user.college_name || (user as any).college_name || "").trim());
-                            setEditInstituteName((user.institute_name || (user as any).institute_name || "").trim());
-                            setEditMobileNumber((user.mobile_number || (user as any).phone || "").trim());
-                            setEditCourseType((user.course_type || (user as any).course_type || "full_time"));
-                            setIsCollegeDropdownOpen(false);
-                            setShowEditProfileDialog(true);
-                          }} className="rounded-xl font-bold text-[13px] py-2.5 cursor-pointer hover:bg-slate-50 text-slate-700">
+                          <DropdownMenuItem onClick={() => openEditProfileForUser(user)} className="rounded-xl font-bold text-[13px] py-2.5 cursor-pointer hover:bg-slate-50 text-slate-700">
                             <Edit className="mr-3 h-4 w-4 text-indigo-500" /> Edit Profile & College
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => {
@@ -958,14 +1172,9 @@ export function UserManagement({
                   onFocus={() => setIsCollegeDropdownOpen(true)}
                   onClick={() => setIsCollegeDropdownOpen(true)}
                   placeholder="Click to select or search college..."
-                  list="admin-college-suggestions"
+                  autoComplete="off"
                   className="h-11 rounded-xl font-bold text-slate-800 border-indigo-200 bg-indigo-50/20 pr-16 focus:border-indigo-500 focus:ring-indigo-500/20 cursor-pointer"
                 />
-                <datalist id="admin-college-suggestions">
-                  {allCollegeList.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
                   {editCollegeName && (
                     <Button
@@ -1868,6 +2077,371 @@ export function UserManagement({
                 Close Logs
               </Button>
            </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk Approval Modal (Pending Review Users) ── */}
+      <Dialog open={showBulkApprovalDialog} onOpenChange={setShowBulkApprovalDialog}>
+        <DialogContent className="w-[95vw] sm:max-w-4xl p-0 border-0 rounded-[2rem] shadow-2xl bg-white overflow-hidden flex flex-col max-h-[90vh]">
+          {/* Header */}
+          <div className=" from-slate-900 via-slate-800 to-slate-900 px-6 py-5 text-white shrink-0">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <ShieldCheck className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-white leading-tight flex items-center gap-2">
+                    Pending Review Users — Bulk Approval
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                    Select users, edit profile details, and approve access in one click
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-start sm:self-center">
+                <Badge className="bg-orange text-black border-amber-500/30 text-md font-black px-3 py-1 rounded-xl">
+                  {pendingUsers.length} Pending
+                </Badge>
+                <Badge className="text-blue-300 border-blue-500/30 text-md font-black px-3 py-1 rounded-xl">
+                  {selectedPendingUserIds.size} Selected
+                </Badge>
+              </div>
+            </div>
+          </div>
+
+          {/* Controls Bar: Search + Select All + College Filter + Target Role & Course Type */}
+          <div className="p-4 border-b border-slate-100 bg-slate-50/70 space-y-3 shrink-0">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              {/* Search Box */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Search pending by name, email, college, or phone..."
+                  value={bulkSearchQuery}
+                  onChange={(e) => setBulkSearchQuery(e.target.value)}
+                  className="pl-9 h-10 rounded-xl bg-white border-slate-200 text-xs font-semibold"
+                />
+              </div>
+
+              {/* College Filter */}
+              <div className="sm:w-52">
+                <Select value={bulkCollegeFilter} onValueChange={setBulkCollegeFilter}>
+                  <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 text-xs font-bold">
+                    <SelectValue placeholder="All Colleges" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl border-slate-200 max-h-56">
+                    <SelectItem value="all" className="text-xs font-bold py-1.5">All Colleges ({pendingUsers.length})</SelectItem>
+                    {pendingColleges.map((col) => (
+                      <SelectItem key={col} value={col} className="text-xs py-1.5 truncate">
+                        {col}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Select All / Deselect Toggle */}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={toggleSelectAllFiltered}
+                className="h-10 px-4 rounded-xl border-slate-200 bg-white hover:bg-slate-100 font-bold text-xs shrink-0 flex items-center gap-2"
+              >
+                <Checkbox
+                  checked={isAllFilteredSelected}
+                  onCheckedChange={toggleSelectAllFiltered}
+                  className="pointer-events-none"
+                />
+                <span>{isAllFilteredSelected ? "Deselect All" : `Select All (${filteredPendingUsers.length})`}</span>
+              </Button>
+            </div>
+
+            {/* Display Count Banner */}
+            <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-indigo-50/70 border border-indigo-100/80 text-[11px] font-bold text-indigo-900">
+              <span className="flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5 text-indigo-600" />
+                Showing <strong>{filteredPendingUsers.length}</strong> of <strong>{pendingUsers.length}</strong> Pending Users
+              </span>
+              <span className="bg-indigo-600 text-white px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider">
+                {selectedPendingUserIds.size} Selected
+              </span>
+            </div>
+
+            {/* Bulk Update Options (Course Type, Role, College, Course Programme, Batch overrides) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-slate-200/60 text-xs">
+              {/* Target Course Type */}
+              <div className="flex flex-col gap-1">
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Course Type:</span>
+                <Select value={bulkTargetCourseType} onValueChange={handleBulkCourseTypeChange}>
+                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="keep" className="text-xs font-bold py-1.5">Keep Registered</SelectItem>
+                    <SelectItem value="full_time" className="text-xs font-bold py-1.5 text-blue-600">Full Time Student</SelectItem>
+                    <SelectItem value="internship" className="text-xs font-bold py-1.5 text-amber-600">Internship Student</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Target Role */}
+              <div className="flex flex-col gap-1">
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Assign Role:</span>
+                <Select value={bulkTargetRole} onValueChange={setBulkTargetRole}>
+                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="keep" className="text-xs font-bold py-1.5">Keep Registered</SelectItem>
+                    <SelectItem value="student" className="text-xs font-bold py-1.5 text-blue-600">Student</SelectItem>
+                    <SelectItem value="intern" className="text-xs font-bold py-1.5 text-amber-600">Intern</SelectItem>
+                    <SelectItem value="instructor" className="text-xs font-bold py-1.5 text-emerald-600">Instructor</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Target Course Programme */}
+              <div className="flex flex-col gap-1">
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Course Programme:</span>
+                <Select value={bulkTargetCourseProgramme} onValueChange={handleBulkCourseProgrammeChange}>
+                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
+                    <SelectValue placeholder="Keep Registered" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl max-h-52">
+                    <SelectItem value="keep" className="text-xs font-bold py-1.5">Keep Registered</SelectItem>
+                    {availableCourses.map((c) => (
+                      <SelectItem key={c.id} value={c.title} className="text-xs py-1.5 font-semibold">
+                        {c.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Target Batch */}
+              <div className="flex flex-col gap-1">
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Batch:</span>
+                <Select value={bulkTargetBatch} onValueChange={setBulkTargetBatch}>
+                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
+                    <SelectValue placeholder="Keep Registered" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl max-h-52">
+                    {availableBatches.map((b) => (
+                      <SelectItem key={b} value={b} className="text-xs py-1.5 font-semibold">
+                        {b === "keep" ? "Keep Registered" : b}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Target College Name */}
+              <div className="flex flex-col gap-1">
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">College Name:</span>
+                <Select value={bulkTargetCollege} onValueChange={setBulkTargetCollege}>
+                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
+                    <SelectValue placeholder="Keep Registered" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl max-h-52">
+                    <SelectItem value="keep" className="text-xs font-bold py-1.5">Keep Registered</SelectItem>
+                    {COLLEGES.map((col) => (
+                      <SelectItem key={col} value={col} className="text-xs py-1.5 truncate font-semibold">
+                        {col}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {/* User List Content */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-2.5 custom-scrollbar min-h-[300px]">
+            {filteredPendingUsers.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="h-16 w-16 rounded-3xl bg-slate-100 flex items-center justify-center mb-3 text-slate-400">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                </div>
+                <p className="text-base font-black text-slate-800">No Pending Review Users</p>
+                <p className="text-xs text-slate-500 max-w-sm mt-1">
+                  {bulkSearchQuery || bulkCollegeFilter !== 'all'
+                    ? "No pending users matched your current search or filter."
+                    : "All registered users have already been reviewed and approved!"}
+                </p>
+              </div>
+            ) : (
+              filteredPendingUsers.map((user) => {
+                const isSelected = selectedPendingUserIds.has(user.id);
+                return (
+                  <div
+                    key={user.id}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl border transition-all ${
+                      isSelected
+                        ? "bg-amber-50/50 border-amber-300 shadow-sm"
+                        : "bg-white border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
+                    {/* Left: Checkbox + Avatar + Info */}
+                    <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleSelectUser(user.id)}
+                        className="mt-1 sm:mt-0"
+                      />
+
+                      <Avatar className="h-11 w-11 rounded-xl shrink-0 border border-slate-200">
+                        <AvatarImage src={user.avatar_url} />
+                        <AvatarFallback className="bg-slate-900 text-white font-black text-sm">
+                          {(user.full_name || user.email || "U").charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-extrabold text-sm text-slate-900 truncate">
+                            {user.full_name || "Platform User"}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border-amber-200">
+                            Pending Review
+                          </Badge>
+                          {user.course_type && (
+                            <Badge variant="outline" className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border-blue-200">
+                              {user.course_type}
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-semibold">
+                          <span className="flex items-center gap-1.5 truncate">
+                            <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            {user.email}
+                          </span>
+                          {(user.mobile_number || (user as any).phone) && (
+                            <span className="flex items-center gap-1.5">
+                              <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                              {user.mobile_number || (user as any).phone}
+                            </span>
+                          )}
+                          {user.college_name && (
+                            <span className="flex items-center gap-1.5 text-indigo-600 font-bold truncate max-w-[280px]">
+                              <GraduationCap className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                              {user.college_name}
+                            </span>
+                          )}
+                          {(user.registration_date || user.created_at) && (
+                            <span className="flex items-center gap-1 text-[11px] text-slate-400 font-normal">
+                              <Clock className="h-3 w-3" />
+                              {user.registration_date || new Date(user.created_at || '').toLocaleDateString('en-IN')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Individual Action Buttons (Edit Profile + Single Approve) */}
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center pl-7 sm:pl-0">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditProfileForUser(user)}
+                        className="h-8 px-3 rounded-lg border-slate-200 hover:border-indigo-300 hover:text-indigo-600 font-bold text-xs flex items-center gap-1.5 bg-white shadow-xs"
+                        title="Edit profile & college details before approval"
+                      >
+                        <Edit className="h-3.5 w-3.5 text-indigo-500" />
+                        <span>Edit Profile</span>
+                      </Button>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={async () => {
+                          const success = await onUpdateStatus(user.id, "approved");
+                          if (success) {
+                            setSelectedPendingUserIds(prev => {
+                              const next = new Set(prev);
+                              next.delete(user.id);
+                              return next;
+                            });
+                            if (onSync) onSync();
+                          }
+                        }}
+                        className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm"
+                        title="Approve this single user"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        <span>Approve</span>
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer Bar: Sticky High-Contrast Actions Bar */}
+          <div className="p-4 border-t-2 border-emerald-500/30 bg-slate-900 text-white flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0 shadow-2xl z-30">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 px-3.5 py-1.5 rounded-xl">
+                <Users className="h-4 w-4 text-emerald-400" />
+                <span className="text-xs font-bold text-slate-300">
+                  Selected: <strong className="text-white text-sm font-black">{selectedPendingUserIds.size}</strong> of {filteredPendingUsers.length}
+                </span>
+              </div>
+
+              {(bulkTargetRole !== "keep" || bulkTargetCourseType !== "keep" || bulkTargetCollege !== "keep" || bulkTargetCourseProgramme !== "keep" || bulkTargetBatch !== "keep") && (
+                <div className="hidden md:flex items-center gap-1.5 text-[10px] text-amber-300 font-semibold bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
+                  <span>⚡ Applying:</span>
+                  {bulkTargetCourseType !== "keep" && <Badge variant="outline" className="text-[9px] border-amber-400/40 text-amber-300 px-1 py-0">{bulkTargetCourseType}</Badge>}
+                  {bulkTargetRole !== "keep" && <Badge variant="outline" className="text-[9px] border-blue-400/40 text-blue-300 px-1 py-0">{bulkTargetRole}</Badge>}
+                  {bulkTargetCourseProgramme !== "keep" && <Badge variant="outline" className="text-[9px] border-emerald-400/40 text-emerald-300 px-1 py-0 truncate max-w-[100px]">{bulkTargetCourseProgramme}</Badge>}
+                  {bulkTargetBatch !== "keep" && <Badge variant="outline" className="text-[9px] border-purple-400/40 text-purple-300 px-1 py-0 truncate max-w-[90px]">{bulkTargetBatch}</Badge>}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setShowBulkApprovalDialog(false)}
+                className="h-11 px-5 rounded-xl font-bold text-xs text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                Close
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isBulkProcessing || selectedPendingUserIds.size === 0}
+                onClick={() => handleBulkApprove("rejected")}
+                className="h-11 px-4 rounded-xl border-rose-500/40 bg-rose-950/40 text-rose-300 hover:bg-rose-900/60 font-bold text-xs disabled:opacity-40"
+              >
+                Reject Selected
+              </Button>
+
+              <Button
+                type="button"
+                disabled={isBulkProcessing || selectedPendingUserIds.size === 0}
+                onClick={() => handleBulkApprove("approved")}
+                className="h-11 px-7 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400/50 flex items-center gap-2.5 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
+              >
+                {isBulkProcessing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="h-5 w-5 text-slate-950" />
+                    <span>Approve Selected ({selectedPendingUserIds.size})</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

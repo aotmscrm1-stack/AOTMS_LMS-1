@@ -2276,6 +2276,71 @@ app.put('/api/admin/update-user-status', authenticateToken, requireAdmin, async 
     }
 });
 
+app.put('/api/admin/bulk-update-user-status', authenticateToken, requireAdmin, async (req, res) => {
+    const { userIds, status, role, course_type, college_name, course_id, course_title, batch_name } = req.body;
+    if (!Array.isArray(userIds) || userIds.length === 0 || !status) {
+        return res.status(400).json({ error: 'Missing userIds array or status' });
+    }
+
+    try {
+        const objectIds = userIds.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null).filter(Boolean);
+        const idMatches = [{ user_id: { $in: userIds } }, { user_id: { $in: objectIds } }];
+
+        let updateData = { approval_status: status, updated_at: new Date() };
+        if (course_type) {
+            updateData.course_type = course_type;
+        }
+        if (college_name) {
+            updateData.college_name = college_name;
+        }
+        if (batch_name) {
+            updateData.batch_name = batch_name;
+            updateData.batch = batch_name;
+        }
+        if (status === 'approved') {
+            updateData.suspended_until = null;
+        }
+
+        await Profile.updateMany({ $or: idMatches }, { $set: updateData });
+
+        if (role) {
+            for (const uid of userIds) {
+                const uObjId = mongoose.Types.ObjectId.isValid(uid) ? new mongoose.Types.ObjectId(uid) : uid;
+                await UserRole.findOneAndUpdate(
+                    { user_id: uid },
+                    { $set: { user_id: uObjId, role, updated_at: new Date() } },
+                    { upsert: true }
+                ).catch(() => {});
+            }
+        }
+
+        if (course_id || course_title || batch_name) {
+            const EnrollmentModel = mongoose.models.Enrollment || mongoose.models.CourseEnrollment;
+            if (EnrollmentModel) {
+                for (const uid of userIds) {
+                    let setObj = { user_id: uid, updated_at: new Date() };
+                    if (course_id) setObj.course_id = course_id;
+                    if (course_title) setObj.course_title = course_title;
+                    if (batch_name) setObj.batch_name = batch_name;
+                    await EnrollmentModel.updateOne(
+                        { user_id: uid },
+                        { $set: setObj },
+                        { upsert: true }
+                    ).catch(() => {});
+                }
+            }
+        }
+
+        userIds.forEach(uid => {
+            if (status === 'approved') io.to(uid.toString()).emit('user_approved');
+        });
+
+        res.json({ success: true, count: userIds.length, message: `Successfully updated ${userIds.length} users to ${status}` });
+    } catch (err) {
+        handleError(res, err, 'bulk-update-user-status');
+    }
+});
+
 app.put('/api/admin/update-user-profile', authenticateToken, requireAdminOrManager, async (req, res) => {
     const { userId, full_name, college_name, institute_name, mobile_number, course_type } = req.body;
     if (!userId) return res.status(400).json({ error: 'Missing userId' });
