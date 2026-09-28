@@ -2301,6 +2301,53 @@ app.put('/api/admin/bulk-update-user-status', authenticateToken, requireAdmin, a
             updateData.suspended_until = null;
         }
 
+        // Try resolving Course document if course_id or course_title is passed
+        let targetCourse = null;
+        if (course_id && mongoose.Types.ObjectId.isValid(course_id)) {
+            targetCourse = await Course.findById(course_id).lean();
+        }
+        if (!targetCourse && course_title) {
+            targetCourse = await Course.findOne({
+                $or: [
+                    { title: course_title },
+                    { title: new RegExp('^' + course_title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') }
+                ]
+            }).lean();
+        }
+
+        // Try resolving Batch document if batch_name is passed
+        let targetBatch = null;
+        if (batch_name) {
+            const batchQuery = {
+                $or: [
+                    { batch_name: batch_name },
+                    { batch_name: new RegExp('^' + batch_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') }
+                ]
+            };
+            if (targetCourse) {
+                batchQuery.course_id = targetCourse._id;
+            }
+            targetBatch = await Batch.findOne(batchQuery).lean();
+            if (!targetBatch) {
+                targetBatch = await Batch.findOne({
+                    $or: [
+                        { batch_name: batch_name },
+                        { batch_name: new RegExp('^' + batch_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') }
+                    ]
+                }).lean();
+            }
+        }
+
+        if (targetCourse) {
+            updateData.course_id = targetCourse._id;
+            updateData.course_title = targetCourse.title;
+        }
+        if (targetBatch) {
+            updateData.batch_id = targetBatch._id;
+            updateData.batch_name = targetBatch.batch_name;
+            updateData.batch = targetBatch.batch_name;
+        }
+
         await Profile.updateMany({ $or: idMatches }, { $set: updateData });
 
         if (role) {
@@ -2314,19 +2361,43 @@ app.put('/api/admin/bulk-update-user-status', authenticateToken, requireAdmin, a
             }
         }
 
-        if (course_id || course_title || batch_name) {
-            const EnrollmentModel = mongoose.models.Enrollment || mongoose.models.CourseEnrollment;
-            if (EnrollmentModel) {
-                for (const uid of userIds) {
-                    let setObj = { user_id: uid, updated_at: new Date() };
-                    if (course_id) setObj.course_id = course_id;
-                    if (course_title) setObj.course_title = course_title;
-                    if (batch_name) setObj.batch_name = batch_name;
-                    await EnrollmentModel.updateOne(
-                        { user_id: uid },
-                        { $set: setObj },
-                        { upsert: true }
-                    ).catch(() => {});
+        // Auto-enroll students into Course Enrollment & Student Batch when approved and assigned a course/batch
+        if (status === 'approved' && targetCourse) {
+            for (const uid of userIds) {
+                const uObjId = mongoose.Types.ObjectId.isValid(uid) ? new mongoose.Types.ObjectId(uid) : uid;
+                await Enrollment.findOneAndUpdate(
+                    { user_id: uObjId, course_id: targetCourse._id },
+                    {
+                        $set: {
+                            user_id: uObjId,
+                            course_id: targetCourse._id,
+                            status: 'active',
+                            updated_at: new Date()
+                        },
+                        $setOnInsert: {
+                            progress_percentage: 0,
+                            enrolled_at: new Date()
+                        }
+                    },
+                    { upsert: true, new: true }
+                ).catch(err => console.error('[bulk-update] Enrollment update error:', err));
+
+                if (targetBatch) {
+                    await StudentBatch.findOneAndUpdate(
+                        { student_id: uObjId, course_id: targetCourse._id },
+                        {
+                            $set: {
+                                student_id: uObjId,
+                                course_id: targetCourse._id,
+                                batch_id: targetBatch._id,
+                                updated_at: new Date()
+                            },
+                            $setOnInsert: {
+                                assigned_at: new Date()
+                            }
+                        },
+                        { upsert: true, new: true }
+                    ).catch(err => console.error('[bulk-update] StudentBatch update error:', err));
                 }
             }
         }
@@ -2334,6 +2405,9 @@ app.put('/api/admin/bulk-update-user-status', authenticateToken, requireAdmin, a
         userIds.forEach(uid => {
             if (status === 'approved') io.to(uid.toString()).emit('user_approved');
         });
+        if (targetCourse) {
+            io.emit('course_enrollments_changed', { courseId: targetCourse._id });
+        }
 
         res.json({ success: true, count: userIds.length, message: `Successfully updated ${userIds.length} users to ${status}` });
     } catch (err) {
