@@ -182,7 +182,16 @@ export function UserManagement({
   const [bulkTargetCourseProgramme, setBulkTargetCourseProgramme] = useState("keep");
   const [bulkTargetBatch, setBulkTargetBatch] = useState("keep");
   const [availableCourses, setAvailableCourses] = useState<{ id: string; title: string }[]>([]);
+  const [courseFetchedBatches, setCourseFetchedBatches] = useState<string[]>([]);
+  const [dbBatches, setDbBatches] = useState<{ id: string; batch_name: string; course_id?: string; course_title?: string }[]>([]);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [syncedUserPreviews, setSyncedUserPreviews] = useState<Record<string, {
+    role?: string;
+    course_type?: string;
+    college_name?: string;
+    course_title?: string;
+    batch_name?: string;
+  }>>({});
 
   // Edit Profile States
   const [showEditProfileDialog, setShowEditProfileDialog] = useState(false);
@@ -262,7 +271,7 @@ export function UserManagement({
     }
   };
 
-  // Fetch available courses list for bulk assignment
+  // Fetch available courses list & all DB batches on mount
   useEffect(() => {
     fetchWithAuth<any[]>('/public/courses')
       .then(data => {
@@ -271,6 +280,19 @@ export function UserManagement({
             id: c.id || c._id || c.slug,
             title: c.title || c.name || "Untitled Course"
           })));
+        }
+      })
+      .catch(() => {});
+
+    fetchWithAuth<any[]>('/batches')
+      .then(data => {
+        if (Array.isArray(data)) {
+          setDbBatches(data.map(b => ({
+            id: b._id || b.id,
+            batch_name: b.batch_name || b.name || b.title,
+            course_id: b.course_id ? b.course_id.toString() : undefined,
+            course_title: b.course_title || b.course_name
+          })).filter(b => b.batch_name));
         }
       })
       .catch(() => {});
@@ -300,29 +322,91 @@ export function UserManagement({
     }
   };
 
-  // Dynamic Batches list based on selected Course Programme
-  const availableBatches = useMemo(() => {
+  // Fetch course-specific batches from backend whenever Course Programme changes
+  useEffect(() => {
     if (bulkTargetCourseProgramme !== "keep") {
-      return [
-        "keep",
-        `${bulkTargetCourseProgramme} - Batch A`,
-        `${bulkTargetCourseProgramme} - Batch B`,
-        "Batch 1 (Morning)",
-        "Batch 2 (Evening)",
-        "Weekend Batch",
-        "Fast-Track Batch"
-      ];
+      const selectedCourse = availableCourses.find(c => c.title === bulkTargetCourseProgramme);
+      if (selectedCourse?.id) {
+        fetchWithAuth<any[]>(`/batches?course_id=${selectedCourse.id}`)
+          .then(data => {
+            if (Array.isArray(data) && data.length > 0) {
+              const names = data.map(b => b.batch_name || b.name || b.title).filter(Boolean);
+              setCourseFetchedBatches(names);
+            } else {
+              setCourseFetchedBatches([]);
+            }
+          })
+          .catch(() => setCourseFetchedBatches([]));
+      } else {
+        setCourseFetchedBatches([]);
+      }
+    } else {
+      setCourseFetchedBatches([]);
     }
-    return [
-      "keep",
-      "Batch 1 (Morning)",
-      "Batch 2 (Evening)",
-      "2026 Batch A",
-      "2026 Batch B",
-      "Weekend Batch",
-      "Fast-Track Internship Batch"
-    ];
-  }, [bulkTargetCourseProgramme]);
+  }, [bulkTargetCourseProgramme, availableCourses]);
+
+  // Real Existing Batches list strictly from database / fetched course batches
+  const availableBatches = useMemo(() => {
+    const list = ["keep"];
+    const namesSet = new Set<string>();
+
+    if (bulkTargetCourseProgramme !== "keep") {
+      const selectedCourse = availableCourses.find(c => c.title === bulkTargetCourseProgramme);
+      const courseIdStr = selectedCourse?.id ? selectedCourse.id.toString() : "";
+
+      // 1. Add batches specifically fetched for this course_id from backend
+      courseFetchedBatches.forEach(b => {
+        if (b && b.trim()) namesSet.add(b.trim());
+      });
+
+      // 2. Add batches from dbBatches matching course_id or course_title
+      dbBatches.forEach(b => {
+        if (b.batch_name && b.batch_name.trim()) {
+          const isIdMatch = courseIdStr && b.course_id === courseIdStr;
+          const isTitleMatch = b.course_title && b.course_title.toLowerCase() === bulkTargetCourseProgramme.toLowerCase();
+          const isNameIncludes = b.batch_name.toLowerCase().includes(bulkTargetCourseProgramme.toLowerCase());
+          if (isIdMatch || isTitleMatch || isNameIncludes) {
+            namesSet.add(b.batch_name.trim());
+          }
+        }
+      });
+    } else {
+      // 1. Add all existing batches from dbBatches
+      dbBatches.forEach(b => {
+        if (b.batch_name && b.batch_name.trim()) namesSet.add(b.batch_name.trim());
+      });
+      // 2. Add any batch names from registered users
+      users.forEach(u => {
+        if (u.batch_name && u.batch_name.trim()) namesSet.add(u.batch_name.trim());
+        if ((u as any).batch && typeof (u as any).batch === 'string' && (u as any).batch.trim()) {
+          namesSet.add((u as any).batch.trim());
+        }
+      });
+    }
+
+    namesSet.forEach(name => list.push(name));
+    return list;
+  }, [bulkTargetCourseProgramme, courseFetchedBatches, dbBatches, availableCourses, users]);
+
+  // Sync Options Data to Selected Users Preview
+  const handleSyncOptionsToSelected = () => {
+    if (selectedPendingUserIds.size === 0) {
+      toast.error("Please select at least one user to sync options.");
+      return;
+    }
+    const newPreviews = { ...syncedUserPreviews };
+    selectedPendingUserIds.forEach(id => {
+      newPreviews[id] = {
+        role: bulkTargetRole !== "keep" ? bulkTargetRole : undefined,
+        course_type: bulkTargetCourseType !== "keep" ? bulkTargetCourseType : undefined,
+        college_name: bulkTargetCollege !== "keep" ? bulkTargetCollege : undefined,
+        course_title: bulkTargetCourseProgramme !== "keep" ? bulkTargetCourseProgramme : undefined,
+        batch_name: bulkTargetBatch !== "keep" ? bulkTargetBatch : undefined,
+      };
+    });
+    setSyncedUserPreviews(newPreviews);
+    toast.success(`Synced options to ${selectedPendingUserIds.size} selected users! Check live preview cards below.`);
+  };
 
   // Bulk Approve / Reject handler
   const handleBulkApprove = async (targetStatus: "approved" | "rejected" = "approved") => {
@@ -362,9 +446,10 @@ export function UserManagement({
 
       // Optimistically update local state
       ids.forEach(id => {
-        const u = users.find(x => x.id === id);
+        const u = users.find(x => x.id === id || (x as any).user_id === id || (x as any)._id === id);
         if (u) {
           u.approval_status = targetStatus;
+          (u as any).status = targetStatus;
           if (bulkTargetRole !== "keep") u.role = bulkTargetRole as any;
           if (bulkTargetCourseType !== "keep") u.course_type = bulkTargetCourseType;
           if (bulkTargetCollege !== "keep") u.college_name = bulkTargetCollege;
@@ -2159,14 +2244,27 @@ export function UserManagement({
             </div>
 
             {/* Display Count Banner */}
-            <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-indigo-50/70 border border-indigo-100/80 text-[11px] font-bold text-indigo-900">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-indigo-50/80 border border-indigo-100/90 text-xs font-bold text-indigo-950">
               <span className="flex items-center gap-1.5">
-                <Users className="h-3.5 w-3.5 text-indigo-600" />
+                <Users className="h-4 w-4 text-indigo-600 shrink-0" />
                 Showing <strong>{filteredPendingUsers.length}</strong> of <strong>{pendingUsers.length}</strong> Pending Users
               </span>
-              <span className="bg-indigo-600 text-white px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider">
-                {selectedPendingUserIds.size} Selected
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="bg-indigo-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                  {selectedPendingUserIds.size} Selected
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSyncOptionsToSelected}
+                  disabled={selectedPendingUserIds.size === 0}
+                  className="h-8 px-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 active:scale-95 transition-all"
+                  title="Sync selected Course Type, Role, College, Course Programme & Batch to selected users"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-indigo-200" />
+                  <span>Sync Options Data</span>
+                </Button>
+              </div>
             </div>
 
             {/* Bulk Update Options (Course Type, Role, College, Course Programme, Batch overrides) */}
@@ -2222,9 +2320,18 @@ export function UserManagement({
 
               {/* Target Batch */}
               <div className="flex flex-col gap-1">
-                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Batch:</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">
+                    {bulkTargetCourseProgramme !== "keep" ? `Batch (${bulkTargetCourseProgramme.slice(0, 10)}...):` : "Batch:"}
+                  </span>
+                  {bulkTargetCourseProgramme !== "keep" && (
+                    <Badge variant="outline" className="text-[8px] bg-purple-50 text-purple-700 border-purple-200 px-1 py-0 font-bold">
+                      Course Filtered
+                    </Badge>
+                  )}
+                </div>
                 <Select value={bulkTargetBatch} onValueChange={setBulkTargetBatch}>
-                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
+                  <SelectTrigger className={`h-9 w-full rounded-xl bg-white text-xs font-bold ${bulkTargetCourseProgramme !== "keep" ? "border-purple-300 ring-2 ring-purple-500/10" : "border-slate-200"}`}>
                     <SelectValue placeholder="Keep Registered" />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl max-h-52">
@@ -2308,10 +2415,41 @@ export function UserManagement({
                           </Badge>
                           {user.course_type && (
                             <Badge variant="outline" className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border-blue-200">
-                              {user.course_type}
+                              {syncedUserPreviews[user.id]?.course_type || user.course_type}
+                            </Badge>
+                          )}
+                          {syncedUserPreviews[user.id] && (
+                            <Badge className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500 text-white shadow-xs animate-pulse">
+                              ✨ Synced Preview
                             </Badge>
                           )}
                         </div>
+
+                        {/* Synced Overrides Preview Tags */}
+                        {syncedUserPreviews[user.id] && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] font-bold">
+                            {syncedUserPreviews[user.id].role && (
+                              <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">
+                                Role: {syncedUserPreviews[user.id].role}
+                              </span>
+                            )}
+                            {syncedUserPreviews[user.id].course_title && (
+                              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md truncate max-w-[180px]">
+                                Course: {syncedUserPreviews[user.id].course_title}
+                              </span>
+                            )}
+                            {syncedUserPreviews[user.id].batch_name && (
+                              <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded-md">
+                                Batch: {syncedUserPreviews[user.id].batch_name}
+                              </span>
+                            )}
+                            {syncedUserPreviews[user.id].college_name && (
+                              <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md truncate max-w-[200px]">
+                                College: {syncedUserPreviews[user.id].college_name}
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-semibold">
                           <span className="flex items-center gap-1.5 truncate">
@@ -2402,14 +2540,26 @@ export function UserManagement({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
               <Button
                 type="button"
                 variant="ghost"
                 onClick={() => setShowBulkApprovalDialog(false)}
-                className="h-11 px-5 rounded-xl font-bold text-xs text-slate-400 hover:text-white hover:bg-slate-800"
+                className="h-11 px-4 rounded-xl font-bold text-xs text-slate-400 hover:text-white hover:bg-slate-800"
               >
                 Close
+              </Button>
+
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSyncOptionsToSelected}
+                disabled={selectedPendingUserIds.size === 0}
+                className="h-11 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md disabled:opacity-40"
+                title="Sync all selected options to user cards"
+              >
+                <RefreshCw className="h-4 w-4" />
+                <span>Sync Data</span>
               </Button>
 
               <Button
