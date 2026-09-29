@@ -162,7 +162,7 @@ export function InstructorSidebar() {
                           "h-10 px-3 rounded-lg transition-colors group relative overflow-hidden",
                           active
                             ? "bg-blue-600 text-white font-medium shadow-sm shadow-blue-600/20"
-                            : "hover:bg-slate-100 text-slate-600 hover:text-slate-900 font-normal"
+                            : "hover:bg-slate-100 text-slate-600 hover:text-black group-hover:text-black font-semibold"
                         )}
                       >
                         <Link to={item.url} className="flex items-center gap-3 w-full">
@@ -170,7 +170,7 @@ export function InstructorSidebar() {
                             <item.icon
                               className={cn(
                                 "h-4 w-4 transition-colors",
-                                active ? "text-white" : "text-slate-400 group-hover:text-slate-700"
+                                active ? "text-white" : "text-slate-400 group-hover:text-black"
                               )}
                             />
                             {item.isLive && (
@@ -193,8 +193,8 @@ export function InstructorSidebar() {
                                 className={cn(
                                   "text-[13px] tracking-normal truncate transition-colors",
                                   active
-                                    ? "text-white font-medium"
-                                    : "text-slate-600 group-hover:text-slate-900 font-normal"
+                                    ? "text-white font-semibold"
+                                    : "text-slate-600 group-hover:text-black font-semibold"
                                 )}
                               >
                                 {item.title}

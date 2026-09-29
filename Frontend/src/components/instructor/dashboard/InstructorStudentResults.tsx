@@ -100,6 +100,8 @@ export function InstructorStudentResults() {
   const [selectedCourseId, setSelectedCourseId] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "passed" | "failed" | "pending">("all");
+  const [batchFilter, setBatchFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<"newest" | "highest" | "lowest">("newest");
   const [selectedResult, setSelectedResult] = useState<StudentResultItem | null>(null);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -131,6 +133,17 @@ export function InstructorStudentResults() {
     top_score: 0,
   };
 
+  // Derive available batches from results
+  const availableBatches = useMemo(() => {
+    const set = new Set<string>();
+    rawResults.forEach((r) => {
+      if (r.batch_name && r.batch_name.trim()) {
+        set.add(r.batch_name.trim());
+      }
+    });
+    return Array.from(set);
+  }, [rawResults]);
+
   // Filter and sort results
   const filteredResults = useMemo(() => {
     let list = [...rawResults];
@@ -157,6 +170,24 @@ export function InstructorStudentResults() {
       list = list.filter((r) => r.grading_status === "pending");
     }
 
+    // Batch/Class filter
+    if (batchFilter !== "all") {
+      list = list.filter((r) => (r.batch_name || "").trim() === batchFilter);
+    }
+
+    // Date filter (YYYY-MM-DD)
+    if (dateFilter) {
+      list = list.filter((r) => {
+        if (!r.submitted_at) return false;
+        const d = new Date(r.submitted_at);
+        if (isNaN(d.getTime())) return false;
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${yyyy}-${mm}-${dd}` === dateFilter;
+      });
+    }
+
     // Sorting
     if (sortBy === "newest") {
       list.sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
@@ -167,7 +198,17 @@ export function InstructorStudentResults() {
     }
 
     return list;
-  }, [rawResults, searchQuery, statusFilter, sortBy]);
+  }, [rawResults, searchQuery, statusFilter, batchFilter, dateFilter, sortBy]);
+
+  // Total unique students in current filtered results
+  const filteredUniqueStudentsCount = useMemo(() => {
+    const set = new Set<string>();
+    filteredResults.forEach((r) => {
+      const key = r.student_id || r.student_email;
+      if (key) set.add(key);
+    });
+    return set.size;
+  }, [filteredResults]);
 
   // Format time spent helper
   const formatTimeSpent = (seconds: number) => {
@@ -423,76 +464,159 @@ export function InstructorStudentResults() {
         </div>
       </div>
 
-      {/* ── Filters & Search Bar ─────────────────────────────────────────── */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
-        {/* Search Input */}
-        <div className="relative flex-1">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input
-            placeholder="Search by student name, email, college, test..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-normal placeholder:text-slate-400 text-slate-700"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+      {/* ── Total Students Count Banner ──────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border border-blue-100 shadow-xs">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black shadow-sm shrink-0">
+            <Users className="h-4 w-4" />
+          </div>
+          <div>
+            <span className="text-xs font-bold text-slate-700">
+              Total Filtered Students Visible: <strong className="text-blue-700 text-sm font-black">{filteredUniqueStudentsCount}</strong> Students
+              <span className="text-slate-500 font-semibold ml-1.5">({filteredResults.length} Submissions)</span>
+            </span>
+          </div>
+        </div>
+
+        {(searchQuery || statusFilter !== "all" || batchFilter !== "all" || dateFilter || selectedCourseId !== "all") && (
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="bg-white text-blue-700 border-blue-200 font-extrabold text-[10px]">
+              Filters Active
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSearchQuery("");
+                setStatusFilter("all");
+                setBatchFilter("all");
+                setDateFilter("");
+                setSelectedCourseId("all");
+              }}
+              className="h-7 px-2.5 text-[11px] font-bold text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg"
             >
-              Clear
-            </button>
-          )}
+              Reset All
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Filters & Search Bar ─────────────────────────────────────────── */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
+          {/* Search Input (Decreased Width) */}
+          <div className="relative w-full sm:w-52 lg:w-60 shrink-0">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
+              placeholder="Search student, test..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-9 bg-slate-50 border-slate-200 rounded-xl text-xs font-medium placeholder:text-slate-400 text-slate-700"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Class / Batch Selector Filter */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Select value={batchFilter} onValueChange={setBatchFilter}>
+              <SelectTrigger className="w-[160px] h-9 bg-slate-50 border-slate-200 text-xs font-bold rounded-xl">
+                <SelectValue placeholder="All Classes" />
+              </SelectTrigger>
+              <SelectContent className="bg-white border-slate-200 shadow-xl rounded-xl max-h-[260px]">
+                <SelectItem value="all" className="text-xs font-bold py-1.5">
+                  All Classes ({availableBatches.length})
+                </SelectItem>
+                {availableBatches.map((b) => (
+                  <SelectItem key={b} value={b} className="text-xs font-semibold py-1.5">
+                    {b}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Date Selector Filter */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="relative flex items-center">
+              <Input
+                type="date"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                className="pl-8 w-[145px] h-9 bg-slate-50 border-slate-200 text-xs font-bold rounded-xl px-2 text-slate-700"
+                title="Filter by submission date"
+              />
+            </div>
+            {dateFilter && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDateFilter("")}
+                className="h-8 px-2 text-[10px] font-bold text-rose-600 hover:bg-rose-50 rounded-lg"
+              >
+                Clear Date
+              </Button>
+            )}
+          </div>
         </div>
 
-        {/* Status Filter Tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-          <Button
-            size="sm"
-            variant={statusFilter === "all" ? "default" : "outline"}
-            onClick={() => setStatusFilter("all")}
-            className={`h-9 px-3 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === "all" ? "bg-slate-900 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            All ({rawResults.length})
-          </Button>
-          <Button
-            size="sm"
-            variant={statusFilter === "passed" ? "default" : "outline"}
-            onClick={() => setStatusFilter("passed")}
-            className={`h-9 px-3 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === "passed"
-                ? "bg-emerald-600 text-white"
-                : "border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            Passed ({rawResults.filter((r) => r.passed).length})
-          </Button>
-          <Button
-            size="sm"
-            variant={statusFilter === "failed" ? "default" : "outline"}
-            onClick={() => setStatusFilter("failed")}
-            className={`h-9 px-3 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === "failed" ? "bg-rose-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            Needs Work ({rawResults.filter((r) => !r.passed).length})
-          </Button>
-        </div>
+        <div className="flex flex-wrap items-center gap-3 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+          {/* Status Filter Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            <Button
+              size="sm"
+              variant={statusFilter === "all" ? "default" : "outline"}
+              onClick={() => setStatusFilter("all")}
+              className={`h-9 px-3 rounded-lg text-xs font-medium transition-colors ${
+                statusFilter === "all" ? "bg-slate-900 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              All ({rawResults.length})
+            </Button>
+            <Button
+              size="sm"
+              variant={statusFilter === "passed" ? "default" : "outline"}
+              onClick={() => setStatusFilter("passed")}
+              className={`h-9 px-3 rounded-lg text-xs font-medium transition-colors ${
+                statusFilter === "passed"
+                  ? "bg-emerald-600 text-white"
+                  : "border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              Passed ({rawResults.filter((r) => r.passed).length})
+            </Button>
+            <Button
+              size="sm"
+              variant={statusFilter === "failed" ? "default" : "outline"}
+              onClick={() => setStatusFilter("failed")}
+              className={`h-9 px-3 rounded-lg text-xs font-medium transition-colors ${
+                statusFilter === "failed" ? "bg-rose-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              Needs Work ({rawResults.filter((r) => !r.passed).length})
+            </Button>
+          </div>
 
-        {/* Sort Select */}
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-slate-400 font-medium">Sort:</span>
-          <Select value={sortBy} onValueChange={(val: any) => setSortBy(val)}>
-            <SelectTrigger className="w-[140px] h-9 bg-slate-50 border-slate-200 text-xs font-medium rounded-lg">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-white border-slate-200 shadow-lg rounded-xl">
-              <SelectItem value="newest" className="text-xs font-medium">Newest First</SelectItem>
-              <SelectItem value="highest" className="text-xs font-medium">Highest Score</SelectItem>
-              <SelectItem value="lowest" className="text-xs font-medium">Lowest Score</SelectItem>
-            </SelectContent>
-          </Select>
+          {/* Sort Select */}
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs text-slate-400 font-medium">Sort:</span>
+            <Select value={sortBy} onValueChange={(val: any) => setSortBy(val)}>
+              <SelectTrigger className="w-[130px] h-9 bg-slate-50 border-slate-200 text-xs font-medium rounded-lg">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-white border-slate-200 shadow-lg rounded-xl">
+                <SelectItem value="newest" className="text-xs font-medium">Newest First</SelectItem>
+                <SelectItem value="highest" className="text-xs font-medium">Highest Score</SelectItem>
+                <SelectItem value="lowest" className="text-xs font-medium">Lowest Score</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 

@@ -2167,7 +2167,7 @@ export function UserManagement({
 
       {/* ── Bulk Approval Modal (Pending Review Users) ── */}
       <Dialog open={showBulkApprovalDialog} onOpenChange={setShowBulkApprovalDialog}>
-        <DialogContent className="w-[95vw] sm:max-w-4xl p-0 border-0 rounded-[2rem] shadow-2xl bg-white overflow-hidden flex flex-col max-h-[90vh]">
+        <DialogContent className="w-[98vw] sm:max-w-[98vw] max-w-[98vw] h-[95vh] max-h-[95vh] p-0 border-0 rounded-[2rem] shadow-2xl bg-white overflow-hidden flex flex-col">
           {/* Header */}
           <div className=" from-slate-900 via-slate-800 to-slate-900 px-6 py-5 text-white shrink-0">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2365,7 +2365,7 @@ export function UserManagement({
           </div>
 
           {/* User List Content */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-2.5 custom-scrollbar min-h-[300px]">
+          <div className="flex-1 overflow-y-auto p-4 pb-10 space-y-2.5 custom-scrollbar min-h-[300px]">
             {filteredPendingUsers.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="h-16 w-16 rounded-3xl bg-slate-100 flex items-center justify-center mb-3 text-slate-400">
@@ -2519,33 +2519,33 @@ export function UserManagement({
             )}
           </div>
 
-          {/* Footer Bar: Sticky High-Contrast Actions Bar */}
-          <div className="p-4 border-t-2 border-emerald-500/30 bg-slate-900 text-white flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0 shadow-2xl z-30">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 px-3.5 py-1.5 rounded-xl">
-                <Users className="h-4 w-4 text-emerald-400" />
-                <span className="text-xs font-bold text-slate-300">
-                  Selected: <strong className="text-white text-sm font-black">{selectedPendingUserIds.size}</strong> of {filteredPendingUsers.length}
+          {/* Footer Bar: Sticky Responsive Actions Bar (Clean Light Theme) */}
+          <div className="p-3.5 sm:p-4 border-t border-slate-200 bg-slate-50/90 backdrop-blur-md flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0 rounded-b-[2rem] z-30">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center gap-2 bg-white border border-slate-200 px-3.5 py-2 rounded-xl shadow-xs">
+                <Users className="h-4 w-4 text-indigo-600" />
+                <span className="text-xs font-bold text-slate-600">
+                  Selected: <strong className="text-slate-900 text-sm font-black">{selectedPendingUserIds.size}</strong> of {filteredPendingUsers.length}
                 </span>
               </div>
 
               {(bulkTargetRole !== "keep" || bulkTargetCourseType !== "keep" || bulkTargetCollege !== "keep" || bulkTargetCourseProgramme !== "keep" || bulkTargetBatch !== "keep") && (
-                <div className="hidden md:flex items-center gap-1.5 text-[10px] text-amber-300 font-semibold bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
+                <div className="hidden lg:flex items-center gap-1.5 text-[10px] text-indigo-800 font-bold bg-indigo-50 border border-indigo-200 px-2.5 py-1.5 rounded-xl">
                   <span>⚡ Applying:</span>
-                  {bulkTargetCourseType !== "keep" && <Badge variant="outline" className="text-[9px] border-amber-400/40 text-amber-300 px-1 py-0">{bulkTargetCourseType}</Badge>}
-                  {bulkTargetRole !== "keep" && <Badge variant="outline" className="text-[9px] border-blue-400/40 text-blue-300 px-1 py-0">{bulkTargetRole}</Badge>}
-                  {bulkTargetCourseProgramme !== "keep" && <Badge variant="outline" className="text-[9px] border-emerald-400/40 text-emerald-300 px-1 py-0 truncate max-w-[100px]">{bulkTargetCourseProgramme}</Badge>}
-                  {bulkTargetBatch !== "keep" && <Badge variant="outline" className="text-[9px] border-purple-400/40 text-purple-300 px-1 py-0 truncate max-w-[90px]">{bulkTargetBatch}</Badge>}
+                  {bulkTargetCourseType !== "keep" && <Badge variant="outline" className="text-[9px] bg-amber-50 text-amber-700 border-amber-200 px-1 py-0">{bulkTargetCourseType}</Badge>}
+                  {bulkTargetRole !== "keep" && <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200 px-1 py-0">{bulkTargetRole}</Badge>}
+                  {bulkTargetCourseProgramme !== "keep" && <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 px-1 py-0 truncate max-w-[100px]">{bulkTargetCourseProgramme}</Badge>}
+                  {bulkTargetBatch !== "keep" && <Badge variant="outline" className="text-[9px] bg-purple-50 text-purple-700 border-purple-200 px-1 py-0 truncate max-w-[90px]">{bulkTargetBatch}</Badge>}
                 </div>
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2.5">
+            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 onClick={() => setShowBulkApprovalDialog(false)}
-                className="h-11 px-4 rounded-xl font-bold text-xs text-slate-400 hover:text-white hover:bg-slate-800"
+                className="h-10 sm:h-11 px-4 rounded-xl font-bold text-xs text-slate-700 border-slate-200 bg-white hover:bg-slate-100 shadow-xs"
               >
                 Close
               </Button>
@@ -2555,7 +2555,7 @@ export function UserManagement({
                 size="sm"
                 onClick={handleSyncOptionsToSelected}
                 disabled={selectedPendingUserIds.size === 0}
-                className="h-11 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md disabled:opacity-40"
+                className="h-10 sm:h-11 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs disabled:opacity-40"
                 title="Sync all selected options to user cards"
               >
                 <RefreshCw className="h-4 w-4" />
@@ -2567,7 +2567,7 @@ export function UserManagement({
                 variant="outline"
                 disabled={isBulkProcessing || selectedPendingUserIds.size === 0}
                 onClick={() => handleBulkApprove("rejected")}
-                className="h-11 px-4 rounded-xl border-rose-500/40 bg-rose-950/40 text-rose-300 hover:bg-rose-900/60 font-bold text-xs disabled:opacity-40"
+                className="h-10 sm:h-11 px-4 rounded-xl border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold text-xs shadow-xs disabled:opacity-40"
               >
                 Reject Selected
               </Button>
@@ -2576,16 +2576,16 @@ export function UserManagement({
                 type="button"
                 disabled={isBulkProcessing || selectedPendingUserIds.size === 0}
                 onClick={() => handleBulkApprove("approved")}
-                className="h-11 px-7 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400/50 flex items-center gap-2.5 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
+                className="h-10 sm:h-11 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:pointer-events-none"
               >
                 {isBulkProcessing ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
                     <span>Processing...</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="h-5 w-5 text-slate-950" />
+                    <ShieldCheck className="h-4 w-4 text-white" />
                     <span>Approve Selected ({selectedPendingUserIds.size})</span>
                   </>
                 )}
