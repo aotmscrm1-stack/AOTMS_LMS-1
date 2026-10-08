@@ -12,10 +12,6 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 const cloudinary = require('cloudinary').v2;
 const vm = require('vm'); // Native Node.js module for executing code locally
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { execFile } = require('child_process');
 const pdfParse = require('pdf-parse');
 const FormData = require('form-data');
 const { sendEmail } = require('./utils/email');
@@ -285,21 +281,6 @@ const getCookie = (req, name) => {
     ));
     return matches ? decodeURIComponent(matches[1]) : undefined;
 };
-
-const getRefreshTokenCookieOptions = () => ({
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-});
-
-const getClearRefreshTokenCookieOptions = () => ({
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/'
-});
 
 const isPasswordStrong = (password) => {
     if (!password) return false;
@@ -745,500 +726,175 @@ app.post('/api/zoom/webhook', async (req, res) => {
 
 
 // --- Question Bank Generator Proxy ---
-// --- Question Bank Generator Proxy ---
 app.post('/api/manager/generate-questions', authenticateToken, requireInstructor, async (req, res) => {
-    console.log('[API] Generate Questions Request:', req.body.topic, req.body.type, req.body.difficulty, req.body.count);
+    console.log('[API] Generate Questions Request:', req.body.topic, req.body.type);
     const { topic, type, count, difficulty, prompt } = req.body;
 
-    const aiAgentApiKey = (process.env.AI_AGENT_API || process.env.OPENAI_API_KEY || '').trim();
-    const geminiApiKey = (process.env.GEMINI_API_KEY || '').trim();
+    const aiAgentApiKey = (process.env.AI_AGENT_API || '').trim();
 
-    const normalizedDifficulty = (() => {
-        const d = (difficulty || 'medium').toLowerCase().trim();
-        if (d.includes('easy') || d.includes('simple')) return 'easy';
-        if (d.includes('hard') || d.includes('difficult') || d.includes('deficult') || d.includes('advanced')) return 'hard';
-        return 'medium';
-    })();
-
-    const normalizedType = (() => {
-        const t = (type || 'mcq').toLowerCase().trim();
-        if (t.includes('true') || t.includes('boolean')) return 'true_false';
-        if (t.includes('short')) return 'short_answer';
-        if (t.includes('long') || t.includes('essay')) return 'long_answer';
-        if (t.includes('fill') || t.includes('blank')) return 'fill_blank';
-        if (t.includes('code') || t.includes('coding') || t.includes('practical')) return 'coding';
-        return 'mcq';
-    })();
-
-    const numCount = Math.max(1, parseInt(count) || 1);
-
-    const buildMockQuestionList = (qType, qTopic, qDiff, reqCount) => {
-        const isEasy = qDiff === 'easy';
-        const isHard = qDiff === 'hard';
-        const marks = isHard ? 5 : isEasy ? 1 : 2;
-        const topicName = qTopic || 'General';
-
-        const list = [];
-        for (let i = 0; i < reqCount; i++) {
-            const idxSuffix = reqCount > 1 ? ` (Set ${i + 1})` : '';
-
-            if (qType === 'true_false') {
-                if (isEasy) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Is HTML used primarily for defining the structure of web pages${idxSuffix}?`,
-                        type: 'true_false',
-                        difficulty: 'easy',
-                        options: ['True', 'False'],
-                        correct_answer: 'True',
-                        explanation: 'HTML provides the basic structural framework for web documents.',
-                        marks: 1
-                    });
-                } else if (isHard) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `In JavaScript, is 'typeof null === "object"' due to an unfixable historical legacy bug in the initial JS engine${idxSuffix}?`,
-                        type: 'true_false',
-                        difficulty: 'hard',
-                        options: ['True', 'False'],
-                        correct_answer: 'True',
-                        explanation: 'In the original JS implementation, values were represented as a type tag and a value. Null had a type tag of 0 (object).',
-                        marks: 5
-                    });
-                } else {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Does JavaScript execute code asynchronously using a single-threaded event loop architecture${idxSuffix}?`,
-                        type: 'true_false',
-                        difficulty: 'medium',
-                        options: ['True', 'False'],
-                        correct_answer: 'True',
-                        explanation: 'JavaScript uses a single event-driven thread with non-blocking I/O callbacks.',
-                        marks: 2
-                    });
-                }
-            } else if (qType === 'short_answer' || qType === 'short') {
-                if (isEasy) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `What command is used to create a new branch in Git${idxSuffix}?`,
-                        type: 'short_answer',
-                        difficulty: 'easy',
-                        correct_answer: 'git branch <branch-name> or git checkout -b <branch-name>',
-                        explanation: 'git branch creates a new branch, checkout -b creates and switches to it.',
-                        marks: 1
-                    });
-                } else if (isHard) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Explain how closures in JavaScript retain access to outer variables even after the outer function has returned execution${idxSuffix}.`,
-                        type: 'short_answer',
-                        difficulty: 'hard',
-                        correct_answer: 'Closures maintain a reference to their outer Lexical Environment Record on the heap, preventing garbage collection.',
-                        explanation: 'Functions hold hidden [[Environment]] references to the scope chain where they were declared.',
-                        marks: 5
-                    });
-                } else {
-                    list.push({
-                        topic: topicName,
-                        question_text: `What is the key difference between 'let' and 'var' declarations in JavaScript${idxSuffix}?`,
-                        type: 'short_answer',
-                        difficulty: 'medium',
-                        correct_answer: "'let' is block-scoped and does not hoist with initialization, whereas 'var' is function-scoped and hoisted.",
-                        explanation: "'let' resides in Temporal Dead Zone before declaration.",
-                        marks: 2
-                    });
-                }
-            } else if (qType === 'long_answer' || qType === 'long') {
-                if (isEasy) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Describe the core purpose of a Database Primary Key and why it is important${idxSuffix}.`,
-                        type: 'long_answer',
-                        difficulty: 'easy',
-                        correct_answer: 'A Primary Key uniquely identifies each row in a database table, ensuring data integrity and enabling indexed fast lookups.',
-                        explanation: 'Primary keys enforce uniqueness and prevent duplicate rows.',
-                        marks: 2
-                    });
-                } else if (isHard) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Critically analyze the architectural trade-offs between SQL (Relational) and NoSQL (Document/Key-Value) databases for high-throughput microservice systems${idxSuffix}.`,
-                        type: 'long_answer',
-                        difficulty: 'hard',
-                        correct_answer: 'SQL databases guarantee ACID compliance and complex relational joins but scale vertically. NoSQL databases offer horizontal scaling, flexible schemas, and high write throughput, but sacrifice strict immediate consistency (BASE / eventual consistency).',
-                        explanation: 'Trade-offs involve CAP theorem, schema flexibility vs data integrity constraints.',
-                        marks: 5
-                    });
-                } else {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Explain the ACID properties of database transactions with relevant examples${idxSuffix}.`,
-                        type: 'long_answer',
-                        difficulty: 'medium',
-                        correct_answer: 'ACID stands for Atomicity (all or nothing), Consistency (valid state transitions), Isolation (concurrent transactions do not collide), and Durability (saved data survives crashes).',
-                        explanation: 'Guarantees reliable database transaction execution.',
-                        marks: 3
-                    });
-                }
-            } else if (qType === 'fill_blank') {
-                if (isEasy) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `CSS stands for _______ Style Sheets${idxSuffix}.`,
-                        type: 'fill_blank',
-                        difficulty: 'easy',
-                        correct_answer: 'Cascading',
-                        explanation: 'CSS stands for Cascading Style Sheets.',
-                        marks: 1
-                    });
-                } else if (isHard) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `The CAP theorem states that a distributed system can simultaneously guarantee only two out of Consistency, Availability, and _______ Tolerance${idxSuffix}.`,
-                        type: 'fill_blank',
-                        difficulty: 'hard',
-                        correct_answer: 'Partition',
-                        explanation: 'Partition Tolerance is mandatory in distributed networks.',
-                        marks: 5
-                    });
-                } else {
-                    list.push({
-                        topic: topicName,
-                        question_text: `In RESTful API design, the HTTP _______ method is used to update existing resources completely${idxSuffix}.`,
-                        type: 'fill_blank',
-                        difficulty: 'medium',
-                        correct_answer: 'PUT',
-                        explanation: 'PUT replaces existing resource representation, PATCH updates partial fields.',
-                        marks: 2
-                    });
-                }
-            } else if (qType === 'coding') {
-                if (isEasy) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Write a program to calculate the sum of two integers${idxSuffix}.`,
-                        type: 'coding',
-                        difficulty: 'easy',
-                        language: 'python',
-                        input_format: 'First line: Integer A\nSecond line: Integer B',
-                        output_format: 'Single integer representing A + B',
-                        constraints: '-10^6 <= A, B <= 10^6',
-                        sample_input: '5\n10',
-                        sample_output: '15',
-                        correct_answer: 'a = int(input())\nb = int(input())\nprint(a + b)',
-                        explanation: 'Reads two integers from standard input and prints their sum.',
-                        test_cases: [
-                            { input: '5\n10', expected_output: '15', explanation: '5 + 10 = 15', is_hidden: false },
-                            { input: '-3\n8', expected_output: '5', explanation: '-3 + 8 = 5', is_hidden: true }
-                        ],
-                        marks: 2
-                    });
-                } else if (isHard) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Write an optimal O(N) solution to find two indices in an array that add up to a target sum (Two Sum Problem)${idxSuffix}.`,
-                        type: 'coding',
-                        difficulty: 'hard',
-                        language: 'python',
-                        input_format: 'Line 1: Space-separated integers representing nums array\nLine 2: Target integer',
-                        output_format: 'Space-separated pair of 0-based indices sorted in ascending order',
-                        constraints: '2 <= len(nums) <= 10^5, -10^9 <= nums[i], target <= 10^9',
-                        sample_input: '2 7 11 15\n9',
-                        sample_output: '0 1',
-                        correct_answer: `import sys
-
-def solve():
-    lines = sys.stdin.read().splitlines()
-    if not lines: return
-    nums = list(map(int, lines[0].split()))
-    target = int(lines[1])
-    seen = {}
-    for i, n in enumerate(nums):
-        diff = target - n
-        if diff in seen:
-            print(f"{seen[diff]} {i}")
-            return
-        seen[n] = i
-
-solve()`,
-                        explanation: 'Uses a Hash Map lookup table to achieve O(N) time and O(N) space complexity.',
-                        test_cases: [
-                            { input: '2 7 11 15\n9', expected_output: '0 1', explanation: 'nums[0] + nums[1] = 2 + 7 = 9', is_hidden: false },
-                            { input: '3 2 4\n6', expected_output: '1 2', explanation: 'nums[1] + nums[2] = 2 + 4 = 6', is_hidden: true }
-                        ],
-                        marks: 5
-                    });
-                } else {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Write a program to check if a given string is a Palindrome (ignoring spaces and casing)${idxSuffix}.`,
-                        type: 'coding',
-                        difficulty: 'medium',
-                        language: 'python',
-                        input_format: 'Single string line',
-                        output_format: 'Print "True" if palindrome, else "False"',
-                        constraints: '1 <= len(s) <= 10^4',
-                        sample_input: 'racecar',
-                        sample_output: 'True',
-                        correct_answer: `s = input().strip().lower()
-s_clean = ''.join(c for c in s if c.isalnum())
-print('True' if s_clean == s_clean[::-1] else 'False')`,
-                        explanation: 'Filters non-alphanumeric characters, converts to lowercase, and compares with reverse.',
-                        test_cases: [
-                            { input: 'racecar', expected_output: 'True', explanation: 'racecar reversed is racecar', is_hidden: false },
-                            { input: 'hello', expected_output: 'False', explanation: 'hello is not a palindrome', is_hidden: true }
-                        ],
-                        marks: 3
-                    });
-                }
-            } else {
-                // Default MCQ
-                if (isEasy) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Which protocol is the primary standard for secure web communication${idxSuffix}?`,
-                        type: 'mcq',
-                        difficulty: 'easy',
-                        options: ['HTTPS', 'FTP', 'SMTP', 'SSH'],
-                        correct_answer: 'HTTPS',
-                        explanation: 'HTTPS encrypts web data transfer using TLS/SSL.',
-                        marks: 1
-                    });
-                } else if (isHard) {
-                    list.push({
-                        topic: topicName,
-                        question_text: `What is the worst-case time complexity of QuickSort when using a naive deterministic pivot selection on an already sorted array${idxSuffix}?`,
-                        type: 'mcq',
-                        difficulty: 'hard',
-                        options: ['O(N^2)', 'O(N log N)', 'O(N)', 'O(log N)'],
-                        correct_answer: 'O(N^2)',
-                        explanation: 'Selecting first/last element as pivot on sorted input creates unbalanced 1:N-1 partitions at each step.',
-                        marks: 5
-                    });
-                } else {
-                    list.push({
-                        topic: topicName,
-                        question_text: `Which data structure operates strictly on a First-In-First-Out (FIFO) principle${idxSuffix}?`,
-                        type: 'mcq',
-                        difficulty: 'medium',
-                        options: ['Queue', 'Stack', 'Binary Tree', 'Heap'],
-                        correct_answer: 'Queue',
-                        explanation: 'Queue inserts at rear and removes from front (FIFO).',
-                        marks: 2
-                    });
-                }
-            }
+    const buildMockQuestion = (qType, qTopic, qDifficulty) => {
+        const shortType = qType?.toLowerCase();
+        if (shortType === 'true_false') {
+            return {
+                topic: qTopic || "General",
+                question_text: "Is the server correctly running?",
+                type: "true_false",
+                difficulty: qDifficulty || "medium",
+                options: ["True", "False"],
+                correct_answer: "True",
+                explanation: "This is a simple explanation.",
+                marks: 1
+            };
         }
-        return list;
+        if (shortType === 'short' || shortType === 'short_answer') {
+            return {
+                topic: qTopic || "General",
+                question_text: "State the primary method to authenticate API key.",
+                type: "short_answer",
+                difficulty: qDifficulty || "medium",
+                correct_answer: "Process API key headers.",
+                explanation: "This is a simple explanation.",
+                marks: 1
+            };
+        }
+        if (shortType === 'long' || shortType === 'long_answer') {
+            return {
+                topic: qTopic || "General",
+                question_text: "Explain the concept of API routing.",
+                type: "long_answer",
+                difficulty: qDifficulty || "medium",
+                correct_answer: "API routing processes requests dynamically through express routes.",
+                explanation: "This is a simple explanation.",
+                marks: 5
+            };
+        }
+        if (shortType === 'fill_blank') {
+            return {
+                topic: qTopic || "General",
+                question_text: "AOTMS uses _______ for databases.",
+                type: "fill_blank",
+                difficulty: qDifficulty || "medium",
+                correct_answer: "MongoDB",
+                explanation: "This is a simple explanation.",
+                marks: 1
+            };
+        }
+        if (shortType === 'coding') {
+            return {
+                topic: qTopic || "General",
+                question_text: "Write code to log 'Hello World'.",
+                type: "coding",
+                difficulty: qDifficulty || "medium",
+                correct_answer: "console.log('Hello World');",
+                explanation: "This is a simple explanation.",
+                marks: 5
+            };
+        }
+        // Default MCQ
+        return {
+            topic: qTopic || "General",
+            question_text: "Which protocol is standard for web traffic?",
+            type: "mcq",
+            difficulty: qDifficulty || "medium",
+            options: ["HTTP", "FTP", "SMTP", "SSH"],
+            correct_answer: "HTTP",
+            explanation: "This is a simple explanation.",
+            marks: 1
+        };
     };
 
-    const systemPrompt = `You are an expert academic and technical quiz generator.
-Generate exactly ${numCount} questions on the topic '${topic || 'General'}'.
-QUESTION TYPE: '${normalizedType}'
-DIFFICULTY LEVEL: '${normalizedDifficulty}'
-EXTRA INSTRUCTIONS: ${prompt || 'None'}
-
-DIFFICULTY LEVEL RULES (STRICTLY COMPLY):
-- 'easy': Basic, fundamental questions testing core definitions, direct facts, or 1-step direct operations. Marks = 1.
-- 'medium': Intermediate questions testing conceptual application, reasoning, standard algorithms, or multi-step analysis. Marks = 2.
-- 'hard' (Difficult): Advanced, complex questions testing edge cases, optimization, multi-step problem solving, or deep architecture. Marks = 5.
-
-QUESTION TYPE SPECIFIC FORMAT RULES:
-1. 'mcq': Include exactly 4 options in "options" array. "correct_answer" MUST match one of the 4 option strings exactly.
-2. 'true_false': Set "options" to ["True", "False"]. "correct_answer" MUST be "True" or "False".
-3. 'short_answer' or 'short': Provide a clear 1-2 sentence answer in "correct_answer".
-4. 'long_answer' or 'long': Provide a detailed comprehensive explanation/essay in "correct_answer".
-5. 'fill_blank': "question_text" MUST contain '_______' for the missing blank. "correct_answer" MUST contain the exact word/phrase.
-6. 'coding': "question_text" MUST be a detailed programming challenge. Provide "language" (e.g. 'python'), "input_format", "output_format", "constraints", "sample_input", "sample_output", "correct_answer" (working code), and "test_cases" array: [{"input": "...", "expected_output": "...", "explanation": "...", "is_hidden": false}].
-
-You MUST reply with a clean JSON object adhering to this schema:
-{
-  "questions": [
-    {
-      "topic": "${topic || 'General'}",
-      "question_text": "Question text",
-      "type": "${normalizedType}",
-      "difficulty": "${normalizedDifficulty}",
-      "options": ["Opt 1", "Opt 2", "Opt 3", "Opt 4"],
-      "correct_answer": "Correct answer",
-      "explanation": "Detailed explanation matching difficulty",
-      "marks": ${normalizedDifficulty === 'hard' ? 5 : normalizedDifficulty === 'medium' ? 2 : 1},
-      "language": "python",
-      "input_format": "",
-      "output_format": "",
-      "constraints": "",
-      "sample_input": "",
-      "sample_output": "",
-      "test_cases": []
-    }
-  ]
-}
-Return raw JSON with NO markdown code blocks (\`\`\`json).`;
-
-    if (!aiAgentApiKey && !geminiApiKey) {
-        console.warn('[AI_AGENT_API] No AI key found in .env. Returning difficulty-aligned mock questions.');
-        const mockQuestions = buildMockQuestionList(normalizedType, topic, normalizedDifficulty, numCount);
+    if (!aiAgentApiKey) {
+        console.warn('[AI_AGENT_API] Key is missing in .env. Returning local mock questions.');
+        const mockQ = buildMockQuestion(type, topic, difficulty);
         return res.json({
-            testing_msg: "Local AI Mock Generator Active",
+            testing_msg: "testing HI message Received an Output",
             ai_agent_api: "none",
-            questions: mockQuestions
+            questions: [mockQ]
         });
     }
 
     try {
-        let content = '';
+        console.log(`[AI_AGENT_API Trigger] Calling OpenAI chat/completions using Project Key...`);
+        console.log("testing HI message Received an Output.");
 
-        if (aiAgentApiKey) {
-            console.log(`[AI_AGENT_API Trigger] Generating ${numCount} ${normalizedDifficulty} ${normalizedType} questions via OpenAI...`);
-            const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-                model: 'gpt-4o-mini',
-                messages: [
-                    { role: 'user', content: systemPrompt }
-                ],
-                temperature: 0.7,
-                response_format: { type: 'json_object' }
-            }, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${aiAgentApiKey}`
-                },
-                timeout: 60000
-            });
-            content = response.data.choices[0].message.content;
-        } else if (geminiApiKey) {
-            console.log(`[Gemini AI Trigger] Generating ${numCount} ${normalizedDifficulty} ${normalizedType} questions via Gemini...`);
-            const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
-                contents: [{ parts: [{ text: systemPrompt }] }]
-            }, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 60000
-            });
-            content = response.data.candidates[0].content.parts[0].text;
+        const systemPrompt = `You are an expert quiz generator. Generate exactly ${count || 1} questions of type '${type || 'mcq'}' on the topic '${topic || 'General'}' with a difficulty level of '${difficulty || 'medium'}'.
+Extra instructions: ${prompt || 'None'}.
+
+You MUST reply with a JSON object in this exact schema:
+{
+  "questions": [
+    {
+      "topic": "${topic || 'General'}",
+      "question_text": "Question text here",
+      "type": "${type || 'mcq'}",
+      "difficulty": "${difficulty || 'medium'}",
+      "options": ["Option A", "Option B", "Option C", "Option D"], // ONLY include for mcq or true_false (options should be ["True", "False"] for true_false)
+      "correct_answer": "Option text of the correct answer, or True/False, or text containing the exact correct answer/code",
+      "explanation": "Simple explanation describing why this answer is correct",
+      "marks": 1
+    }
+  ]
+}
+Do not include any Markdown wrapper like \`\`\`json or text explanation around the JSON, just a clean JSON output.`;
+
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model: 'gpt-4o-mini',
+            messages: [
+                { role: 'user', content: systemPrompt }
+            ],
+            temperature: 0.7,
+            response_format: { type: 'json_object' }
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${aiAgentApiKey}`
+            },
+            timeout: 60000
+        });
+
+        const content = response.data.choices[0].message.content;
+        let data = JSON.parse(content);
+
+        if (data && typeof data === 'object') {
+            if (Array.isArray(data)) {
+                data = { questions: data };
+            }
+            data.testing_msg = "testing HI message Received an Output";
+            data.ai_agent_api = aiAgentApiKey;
         }
 
-        // Clean markdown fences if model included any
-        let cleanContent = content.trim();
-        const fenceMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-        if (fenceMatch) cleanContent = fenceMatch[1].trim();
-
-        let data = JSON.parse(cleanContent);
-        if (Array.isArray(data)) {
-            data = { questions: data };
-        }
-        if (!data.questions || !Array.isArray(data.questions)) {
-            data = { questions: [data] };
-        }
-
-        data.testing_msg = `Generated ${data.questions.length} questions successfully`;
-        data.ai_agent_api = aiAgentApiKey ? 'openai' : 'gemini';
-
-        console.log(`[AI Success] Generated ${data.questions.length} ${normalizedDifficulty} ${normalizedType} questions.`);
+        console.log(`[AI_AGENT_API Success] Successfully generated ${data.questions ? data.questions.length : 0} questions via OpenAI.`);
         res.json(data);
 
     } catch (error) {
-        console.error('Error generating questions via AI API:', error.message);
+        console.error('Error generating questions via OpenAI API:', error.message);
         if (error.response) {
-            console.error('AI API Error Details:', JSON.stringify(error.response.data));
+            console.error('OpenAI Error Details:', JSON.stringify(error.response.data));
         }
 
-        console.log(`[AI Fallback] Returning difficulty-aligned mock questions under error.`);
-        const mockQuestions = buildMockQuestionList(normalizedType, topic, normalizedDifficulty, numCount);
+        console.log(`[AI_AGENT_API Fallback] Returning mock question under error.`);
+        const mockQ = buildMockQuestion(type, topic, difficulty);
         res.json({
-            testing_msg: "Local AI Mock Generator Active (Fallback)",
-            ai_agent_api: aiAgentApiKey ? 'openai' : 'gemini',
-            questions: mockQuestions,
+            testing_msg: "testing HI message Received an Output (fallback)",
+            ai_agent_api: aiAgentApiKey,
+            questions: [mockQ],
             error: error.message
         });
     }
 });
 
-// --- Local Native Python Execution Helper ---
-const runLocalPython = (code, stdin = '') => {
-    return new Promise((resolve) => {
-        const tmpDir = os.tmpdir();
-        const tmpFile = path.join(tmpDir, `script_${Date.now()}_${Math.floor(Math.random() * 10000)}.py`);
-        
-        fs.writeFile(tmpFile, code, 'utf8', (err) => {
-            if (err) {
-                return resolve({
-                    stdout: '',
-                    stderr: `Failed to write python script: ${err.message}`,
-                    code: 1,
-                    output: `Failed to write python script: ${err.message}`
-                });
-            }
+// --- Code Execution Helper ---
+// --- Code Execution Helper (Judge0 Integration) ---
+const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY;
+const JUDGE0_HOST = process.env.JUDGE0_HOST || 'judge0-extra-ce.p.rapidapi.com';
 
-            const child = execFile('python3', [tmpFile], { timeout: 8000, maxBuffer: 5 * 1024 * 1024, encoding: 'utf8' }, (execErr, stdout, stderr) => {
-                fs.unlink(tmpFile, () => {});
-
-                if (execErr && execErr.killed) {
-                    return resolve({
-                        stdout: stdout || '',
-                        stderr: 'Time Limit Exceeded (8 seconds max runtime).',
-                        code: 1,
-                        output: (stdout || '') + '\nTime Limit Exceeded (8 seconds max runtime).'
-                    });
-                }
-
-                const outStr = stdout || '';
-                const errStr = stderr || (execErr && !stdout ? execErr.message : '');
-
-                resolve({
-                    stdout: outStr,
-                    stderr: errStr,
-                    code: execErr ? (execErr.code || 1) : 0,
-                    output: outStr || errStr || 'Execution completed.'
-                });
-            });
-
-            if (stdin && child.stdin) {
-                child.stdin.write(stdin);
-                child.stdin.end();
-            }
-        });
-    });
-};
-
-// --- Multi-Engine Code Execution Helper (Native Local + Judge0 Public CE) ---
 const executeCode = async (language, sourceCode, stdin = '') => {
-    const lang = language?.toLowerCase() || 'javascript';
+    const lang = language?.toLowerCase();
 
-    // Normalization map
-    const langMap = {
-        'javascript': 'javascript', 'js': 'javascript', 'node': 'javascript',
-        'typescript': 'typescript', 'ts': 'typescript',
-        'python': 'python', 'python3': 'python', 'py': 'python',
-        'java': 'java',
-        'cpp': 'cpp', 'c++': 'cpp', 'g++': 'cpp',
-        'c': 'c', 'gcc': 'c',
-        'csharp': 'csharp', 'c#': 'csharp',
-        'sql': 'sql', 'sqlite': 'sql', 'sqlite3': 'sql',
-        'go': 'go', 'golang': 'go',
-        'rust': 'rust', 'rs': 'rust',
-        'php': 'php',
-        'ruby': 'ruby', 'rb': 'ruby'
-    };
-
-    const targetLang = langMap[lang] || 'python';
-
-    // 1. Native Fast Python Execution (0ms network latency, supports emojis, long scripts & loops)
-    if (targetLang === 'python') {
-        try {
-            console.log('[Native Engine] Running Python code locally via child_process...');
-            const res = await runLocalPython(sourceCode, stdin);
-            if (res.stdout || (res.code === 0 && !res.stderr.includes('python3: not found'))) {
-                return { run: res, language: 'python' };
-            }
-            console.log('[Native Python] Local python3 not installed in environment, trying cloud compiler...');
-        } catch (pyErr) {
-            console.warn('[Native Python Error]:', pyErr.message, 'Falling back to cloud API...');
-        }
-    }
-
-    // 2. Fast Local JS Execution
-    if (targetLang === 'javascript' && !stdin) {
-        try {
+    // 1. Local JavaScript Execution (Fallback/Fast Path)
+    if (lang === 'javascript' || lang === 'js' || lang === 'node') {
+        // ... (Keep existing local VM logic for JS as standard)
+        return new Promise((resolve) => {
             const outputBuffer = [];
             const errorBuffer = [];
             const sandbox = {
@@ -1250,64 +906,80 @@ const executeCode = async (language, sourceCode, stdin = '') => {
                 setTimeout, clearTimeout, setInterval, clearInterval,
                 process: { exit: (code) => { throw new Error(`Process exited with code ${code}`); } }
             };
-            const script = new vm.Script(sourceCode);
-            const context = vm.createContext(sandbox);
-            script.runInContext(context, { timeout: 4000 });
-            return {
-                run: {
-                    stdout: outputBuffer.join('\n'),
-                    stderr: errorBuffer.join('\n'),
-                    code: 0,
-                    output: outputBuffer.join('\n') || errorBuffer.join('\n')
-                },
-                language: 'javascript'
-            };
-        } catch (err) {
-            console.log('[Local JS VM] Falling through to cloud compilers due to:', err.message);
-        }
+            try {
+                const script = new vm.Script(sourceCode);
+                const context = vm.createContext(sandbox);
+                script.runInContext(context, { timeout: 2000 });
+                resolve({
+                    run: {
+                        stdout: outputBuffer.join('\n'),
+                        stderr: errorBuffer.join('\n'),
+                        code: 0,
+                        output: outputBuffer.join('\n')
+                    },
+                    language: 'javascript'
+                });
+            } catch (err) {
+                resolve({
+                    run: { stdout: '', stderr: err.message, code: 1, output: err.message },
+                    language: 'javascript'
+                });
+            }
+        });
     }
 
-    // 3. Judge0 Public CE API (No API Key Required)
+    // 2. Judge0 Execution for Other Languages (Python, Java, etc.)
+    if (!JUDGE0_API_KEY) {
+        throw new Error('Judge0 API Key not configured for non-JS languages.');
+    }
+
+    // Map common names to Judge0 Language IDs
+    const langMap = {
+        'python': 71, // Python 3.8.1
+        'python3': 71,
+        'java': 62,   // Java (OpenJDK 13.0.1)
+        'cpp': 54,    // C++ (GCC 9.2.0)
+        'c': 50,      // C (GCC 9.2.0)
+    };
+
+    const languageId = langMap[language.toLowerCase()];
+    if (!languageId) throw new Error(`Language ${language} is not supported by backend compiler yet.`);
+
     try {
-        console.log(`[Judge0 Public CE] Compiling ${targetLang} code...`);
-        const judge0LangMap = {
-            'python': 71,
-            'javascript': 63,
-            'typescript': 74,
-            'cpp': 54,
-            'c': 50,
-            'java': 62,
-            'csharp': 51,
-            'sql': 82,
-            'go': 60,
-            'rust': 73,
-            'php': 68,
-            'ruby': 72
-        };
-        const langId = judge0LangMap[targetLang] || 71;
+        console.log(`[Judge0] Submitting ${language} code...`);
+        // Step 1: Submit Code
+        const submitResponse = await axios.post(`https://${JUDGE0_HOST}/submissions`, {
+            source_code: Buffer.from(sourceCode).toString('base64'),
+            language_id: languageId,
+            stdin: Buffer.from(stdin).toString('base64'),
+        }, {
+            params: { wait: true, base64_encoded: true },
+            headers: {
+                'X-RapidAPI-Key': JUDGE0_API_KEY,
+                'X-RapidAPI-Host': JUDGE0_HOST,
+                'Content-Type': 'application/json'
+            }
+        });
 
-        const judge0Res = await axios.post('https://ce.judge0.com/submissions?wait=true', {
-            source_code: sourceCode,
-            language_id: langId,
-            stdin: stdin || ''
-        }, { timeout: 10000 });
+        const { stdout, stderr, compile_output, message, status } = submitResponse.data;
 
-        const { stdout, stderr, compile_output, message, status } = judge0Res.data;
-        const outStr = stdout || '';
-        const errStr = stderr || compile_output || message || '';
+        const decodedStdout = stdout ? Buffer.from(stdout, 'base64').toString() : '';
+        const decodedStderr = (stderr || compile_output || message) ?
+            Buffer.from(stderr || compile_output || message, 'base64').toString() : '';
 
         return {
             run: {
-                stdout: outStr,
-                stderr: errStr,
-                code: status?.id === 3 ? 0 : 1,
-                output: outStr || errStr || 'Execution finished.'
+                stdout: decodedStdout,
+                stderr: decodedStderr,
+                code: status.id === 3 ? 0 : 1, // 3 is "Accepted"
+                output: decodedStdout || decodedStderr,
+                status: status.description
             },
-            language: targetLang
+            language
         };
-    } catch (j0Err) {
-        console.error('[Judge0 Public CE Error]:', j0Err.message);
-        throw new Error(`Code execution failed: ${j0Err.message}`);
+    } catch (err) {
+        console.error('[Judge0 Error]', err.message);
+        throw new Error(`Execution failed: ${err.message}`);
     }
 };
 
@@ -1333,17 +1005,25 @@ app.post('/api/run-code', authenticateToken, async (req, res) => {
 // --- Auth Routes ---
 
 // Helper to trigger n8n OTP Webhook with automatic Test/Prod URL fallback
-const triggerOtpWebhook = async ({ email, full_name, otp }) => {
-    let n8nUrl = (process.env.OTP_N8N_URL || process.env.OTP_N8n || process.env.OTP_N8N || 'https://aotms.app.n8n.cloud/webhook-test/Email').trim();
-    console.log(`[AUTH-OTP Webhook] Triggering n8n at ${n8nUrl} for ${email}...`);
+const triggerOtpWebhook = async ({ email, full_name, otp, phone, type }) => {
+    let n8nUrl = (process.env.OTP_N8N_URL || process.env.OTP_N8n || process.env.OTP_N8N || 'https://aotms.app.n8n.cloud/webhook/Email').trim();
+    console.log(`[AUTH-OTP Webhook] Triggering n8n at ${n8nUrl} for ${email} (Phone: ${phone || 'N/A'}, Type: ${type || 'auth_otp'})...`);
+
+    const payload = {
+        email,
+        full_name: full_name || 'Student',
+        name: full_name || 'Student',
+        otp: otp || '',
+        phone: phone || '',
+        mobile_number: phone || '',
+        mobile: phone || '',
+        type: type || 'auth_otp',
+        timestamp: new Date().toISOString()
+    };
 
     try {
-        const response = await axios.post(n8nUrl, {
-            email,
-            full_name: full_name || 'Student',
-            otp
-        }, { timeout: 8000 });
-        console.log(`[AUTH-OTP Webhook] Successfully delivered OTP via n8n for ${email}:`, response.data);
+        const response = await axios.post(n8nUrl, payload, { timeout: 8000 });
+        console.log(`[AUTH-OTP Webhook] Successfully delivered to n8n for ${email}:`, response.data);
         return true;
     } catch (err) {
         // Automatically try swapping between test URL (/webhook-test/) and prod URL (/webhook/)
@@ -1353,39 +1033,18 @@ const triggerOtpWebhook = async ({ email, full_name, otp }) => {
 
         console.warn(`[AUTH-OTP Webhook Primary Failed: ${err.message}]. Retrying with fallback URL: ${altUrl}...`);
         try {
-            const altResponse = await axios.post(altUrl, {
-                email,
-                full_name: full_name || 'Student',
-                otp
-            }, { timeout: 8000 });
-            console.log(`[AUTH-OTP Webhook Fallback] Successfully delivered OTP via n8n (${altUrl}) for ${email}:`, altResponse.data);
+            const altResponse = await axios.post(altUrl, payload, { timeout: 8000 });
+            console.log(`[AUTH-OTP Webhook Fallback] Successfully delivered to n8n (${altUrl}) for ${email}:`, altResponse.data);
             return true;
         } catch (fallbackErr) {
             console.error(`[AUTH-OTP Webhook Error]: n8n Webhook failed (${err.message} / ${fallbackErr.message}).`);
-            
-            // ── Brevo SMTP Fallback Disabled (Uncomment below to re-enable Brevo SMTP if needed) ──
-            /*
-            const otpHtml = `
-                <div style="font-family: 'Outfit', 'Inter', sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border-radius: 16px; background: #ffffff; border: 1px solid #e2e8f0;">
-                    <h2 style="color: #0f172a;">Academy of Tech Masters</h2>
-                    <p>Hello ${full_name || 'Student'}, your verification OTP code is:</p>
-                    <div style="background: #f8fafc; font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #1e3a8a; text-align: center; padding: 16px; border-radius: 12px; margin: 20px 0;">${otp}</div>
-                    <p style="font-size: 12px; color: #64748b;">This OTP is valid for 5 minutes.</p>
-                </div>
-            `;
-            await sendEmail({
-                to: email,
-                subject: `🎉 Email Verification OTP: ${otp} | Academy of Tech Masters`,
-                html: otpHtml
-            });
-            */
             return false;
         }
     }
 };
 
 app.post('/api/auth/send-otp', async (req, res) => {
-    const { email, full_name } = req.body;
+    const { email, full_name, phone } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     try {
@@ -1409,8 +1068,14 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
         console.log(`[AUTH-OTP] Generated OTP for ${email}: ${otp}`);
 
-        // Trigger n8n Webhook for OTP Email
-        await triggerOtpWebhook({ email, full_name, otp });
+        let targetPhone = phone || '';
+        if (!targetPhone) {
+            const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+            targetPhone = existingUser?.phone || '';
+        }
+
+        // Trigger n8n Webhook for OTP Email & Calling
+        await triggerOtpWebhook({ email, full_name, otp, phone: targetPhone, type: 'auth_otp' });
 
         res.json({ message: 'OTP sent successfully' });
     } catch (err) {
@@ -1419,7 +1084,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
 });
 
 app.post('/api/auth/resend-otp', async (req, res) => {
-    const { email, full_name } = req.body;
+    const { email, full_name, phone } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     try {
@@ -1442,8 +1107,14 @@ app.post('/api/auth/resend-otp', async (req, res) => {
         );
         console.log(`[AUTH-OTP] Resent OTP for ${email}: ${otp}`);
 
-        // Trigger n8n Webhook for OTP Email
-        await triggerOtpWebhook({ email, full_name, otp });
+        let targetPhone = phone || '';
+        if (!targetPhone) {
+            const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+            targetPhone = existingUser?.phone || '';
+        }
+
+        // Trigger n8n Webhook for OTP Email & Calling
+        await triggerOtpWebhook({ email, full_name, otp, phone: targetPhone, type: 'resend_otp' });
 
         res.json({ message: 'OTP resent successfully' });
     } catch (err) {
@@ -1491,20 +1162,15 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     }
 });
 
-app.post('/api/auth/logout', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (token) {
-        try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            if (decoded && decoded.id) {
-                blacklistUserTokens(decoded.id);
-            }
-        } catch (e) {
-            // Expired or invalid access token is fine, still clear the refresh cookie
-        }
+app.post('/api/auth/logout', authenticateToken, (req, res) => {
+    if (req.user && req.user.id) {
+        blacklistUserTokens(req.user.id);
     }
-    res.clearCookie('refresh_token', getClearRefreshTokenCookieOptions());
+    res.clearCookie('refresh_token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+    });
     res.json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -1539,22 +1205,14 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         resetOtpStore.set(email.toLowerCase().trim(), { otp, expiresAt, failedAttempts: 0, createdAt: Date.now() });
         setTimeout(() => resetOtpStore.delete(email.toLowerCase().trim()), 5 * 60 * 1000);
 
-        // Call n8n webhook — it emails the OTP to the user
-        try {
-            await fetch('https://aotms.app.n8n.cloud/webhook/Email', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    email: email.toLowerCase().trim(),
-                    otp,
-                    name: user.full_name || 'User',
-                    type: 'forgot_password'
-                })
-            });
-        } catch (n8nErr) {
-            console.error('[ForgotPassword] n8n webhook failed:', n8nErr.message);
-            // Don't fail — OTP is stored, but email may not be sent
-        }
+        // Call n8n webhook — it emails/calls the OTP to the user
+        await triggerOtpWebhook({
+            email: email.toLowerCase().trim(),
+            full_name: user.full_name || 'User',
+            otp,
+            phone: user.phone || '',
+            type: 'forgot_password'
+        });
 
         console.log(`[ForgotPassword] OTP ${otp} generated for ${email}`);
         res.json({ success: true, message: 'OTP sent to your email.' });
@@ -1629,7 +1287,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 app.post('/api/auth/refresh', async (req, res) => {
-    const refreshToken = getCookie(req, 'refresh_token') || req.body?.refresh_token;
+    const refreshToken = getCookie(req, 'refresh_token') || req.body.refresh_token;
     if (!refreshToken) return res.status(401).json({ error: 'Refresh token is missing' });
 
     try {
@@ -1637,15 +1295,17 @@ app.post('/api/auth/refresh', async (req, res) => {
         const user = await User.findById(decoded.id);
         if (!user) return res.status(401).json({ error: 'User session no longer valid' });
 
-        // Unblacklist user if previously blacklisted
-        tokenBlacklist.delete(`user:${user._id.toString()}`);
-
         // Generate new token pair
         const newAccessToken = generateToken(user);
         const newRefreshToken = generateRefreshToken(user);
 
         // Update the HttpOnly cookie
-        res.cookie('refresh_token', newRefreshToken, getRefreshTokenCookieOptions());
+        res.cookie('refresh_token', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
 
         res.json({
             session: {
@@ -1745,10 +1405,23 @@ app.post('/api/auth/signup', async (req, res) => {
             role: assignedRole
         });
 
-        tokenBlacklist.delete(`user:${user._id.toString()}`);
         const token = generateToken(user);
         const refreshToken = generateRefreshToken(user);
-        res.cookie('refresh_token', refreshToken, getRefreshTokenCookieOptions());
+        res.cookie('refresh_token', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
+
+        // Trigger n8n Webhook for Registration confirmation & calling
+        triggerOtpWebhook({
+            email,
+            full_name: fullName,
+            otp: '',
+            phone: phone || '',
+            type: 'signup_welcome'
+        }).catch(e => console.error('[Signup n8n webhook error]:', e.message));
 
         res.json({
             user: { id: user._id, email, full_name: fullName, avatar_url: avatarUrl, role: assignedRole },
@@ -1893,6 +1566,15 @@ app.post('/api/auth/login', async (req, res) => {
                 details: { email, timestamp: loginTime }
             });
 
+            // Trigger n8n Webhook for Admin OTP & Calling
+            await triggerOtpWebhook({
+                email,
+                full_name: user.full_name,
+                otp,
+                phone: user.phone || profile?.mobile_number || '',
+                type: 'admin_login_otp'
+            });
+
             // Send Admin Login OTP directly via Resend email helper
             const otpHtml = `
                 <div style="font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #334155; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 20px; background-color: #ffffff; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);">
@@ -1920,10 +1602,14 @@ app.post('/api/auth/login', async (req, res) => {
             `;
 
             try {
-                await triggerOtpWebhook({ email, full_name: user.full_name, otp });
-                console.log(`[Security] Admin OTP sent successfully via n8n to ${email}`);
+                await sendEmail({
+                    to: email,
+                    subject: 'Security: Admin Login Passcode | Academy of Tech Masters',
+                    html: otpHtml
+                });
+                console.log(`[Security] Admin OTP sent successfully to ${email}`);
             } catch (e) {
-                console.error(`[Security] Admin OTP API error:`, e.message);
+                console.error(`[Security] Admin OTP Resend API error:`, e.message);
             }
 
             console.log(`[Security] Admin OTP generated and scheduled for ${email}: ${otp}`);
@@ -1931,10 +1617,14 @@ app.post('/api/auth/login', async (req, res) => {
         }
         // ----------------------
 
-        tokenBlacklist.delete(`user:${user._id.toString()}`);
         const token = generateToken(user);
         const refreshToken = generateRefreshToken(user);
-        res.cookie('refresh_token', refreshToken, getRefreshTokenCookieOptions());
+        res.cookie('refresh_token', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
 
         res.json({
             user: {
@@ -1999,7 +1689,6 @@ app.post('/api/auth/admin-verify-otp', async (req, res) => {
         const userRole = roleDoc ? roleDoc.role : 'student';
         if (userRole !== 'admin') return res.status(403).json({ error: 'Admin access only.' });
 
-        tokenBlacklist.delete(`user:${user._id.toString()}`);
         const token = generateToken(user);
         const loginTime = new Date().toISOString();
         const loginIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -2020,7 +1709,12 @@ app.post('/api/auth/admin-verify-otp', async (req, res) => {
         console.log(`[Security] Admin OTP verified — login complete for ${email}`);
 
         const refreshToken = generateRefreshToken(user);
-        res.cookie('refresh_token', refreshToken, getRefreshTokenCookieOptions());
+        res.cookie('refresh_token', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
 
         res.json({
             user: {
@@ -2069,6 +1763,15 @@ app.post('/api/auth/admin-resend-otp', async (req, res) => {
             { upsert: true, returnDocument: 'after' }
         );
 
+        // Trigger n8n Webhook for Admin Resend OTP & Calling
+        await triggerOtpWebhook({
+            email,
+            full_name: user.full_name,
+            otp,
+            phone: user.phone || '',
+            type: 'admin_resend_otp'
+        });
+
         // Send Admin Login OTP directly via Resend email helper
         const otpHtml = `
             <div style="font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #334155; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 20px; background-color: #ffffff; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);">
@@ -2095,8 +1798,12 @@ app.post('/api/auth/admin-resend-otp', async (req, res) => {
         `;
 
         try {
-            await triggerOtpWebhook({ email, full_name: user.full_name, otp });
-            console.log(`[Security] Admin OTP resent successfully via n8n to ${email}`);
+            await sendEmail({
+                to: email,
+                subject: 'Security: Admin Login Passcode | Academy of Tech Masters',
+                html: otpHtml
+            });
+            console.log(`[Security] Admin OTP resent successfully to ${email}`);
         } catch (e) {
             console.error(`[Security] Admin OTP Resend API error (Resend):`, e.message);
         }
@@ -2281,223 +1988,6 @@ app.put('/api/admin/update-user-status', authenticateToken, requireAdmin, async 
         res.json({ message: `User status updated to ${status}` });
     } catch (err) {
         handleError(res, err, 'update-user-status');
-    }
-});
-
-app.put('/api/admin/bulk-update-user-status', authenticateToken, requireAdmin, async (req, res) => {
-    const { userIds, status, role, course_type, college_name, course_id, course_title, batch_name } = req.body;
-    if (!Array.isArray(userIds) || userIds.length === 0 || !status) {
-        return res.status(400).json({ error: 'Missing userIds array or status' });
-    }
-
-    try {
-        const objectIds = userIds.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null).filter(Boolean);
-        const idMatches = [{ user_id: { $in: userIds } }, { user_id: { $in: objectIds } }];
-
-        let updateData = { approval_status: status, updated_at: new Date() };
-        if (course_type) {
-            updateData.course_type = course_type;
-        }
-        if (college_name) {
-            updateData.college_name = college_name;
-        }
-        if (batch_name) {
-            updateData.batch_name = batch_name;
-            updateData.batch = batch_name;
-        }
-        if (status === 'approved') {
-            updateData.suspended_until = null;
-        }
-
-        // Try resolving Course document if course_id or course_title is passed
-        let targetCourse = null;
-        if (course_id && mongoose.Types.ObjectId.isValid(course_id)) {
-            targetCourse = await Course.findById(course_id).lean();
-        }
-        if (!targetCourse && course_title) {
-            targetCourse = await Course.findOne({
-                $or: [
-                    { title: course_title },
-                    { title: new RegExp('^' + course_title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') }
-                ]
-            }).lean();
-        }
-
-        // Try resolving Batch document if batch_name is passed
-        let targetBatch = null;
-        if (batch_name) {
-            const batchQuery = {
-                $or: [
-                    { batch_name: batch_name },
-                    { batch_name: new RegExp('^' + batch_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') }
-                ]
-            };
-            if (targetCourse) {
-                batchQuery.course_id = targetCourse._id;
-            }
-            targetBatch = await Batch.findOne(batchQuery).lean();
-            if (!targetBatch) {
-                targetBatch = await Batch.findOne({
-                    $or: [
-                        { batch_name: batch_name },
-                        { batch_name: new RegExp('^' + batch_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') }
-                    ]
-                }).lean();
-            }
-        }
-
-        if (targetCourse) {
-            updateData.course_id = targetCourse._id;
-            updateData.course_title = targetCourse.title;
-        }
-        if (targetBatch) {
-            updateData.batch_id = targetBatch._id;
-            updateData.batch_name = targetBatch.batch_name;
-            updateData.batch = targetBatch.batch_name;
-        }
-
-        await Profile.updateMany({ $or: idMatches }, { $set: updateData });
-
-        if (role) {
-            for (const uid of userIds) {
-                const uObjId = mongoose.Types.ObjectId.isValid(uid) ? new mongoose.Types.ObjectId(uid) : uid;
-                await UserRole.findOneAndUpdate(
-                    { user_id: uid },
-                    { $set: { user_id: uObjId, role, updated_at: new Date() } },
-                    { upsert: true }
-                ).catch(() => {});
-            }
-        }
-
-        // Auto-enroll students into Course Enrollment & Student Batch when approved and assigned a course/batch
-        if (status === 'approved' && targetCourse) {
-            for (const uid of userIds) {
-                const uObjId = mongoose.Types.ObjectId.isValid(uid) ? new mongoose.Types.ObjectId(uid) : uid;
-                await Enrollment.findOneAndUpdate(
-                    { user_id: uObjId, course_id: targetCourse._id },
-                    {
-                        $set: {
-                            user_id: uObjId,
-                            course_id: targetCourse._id,
-                            status: 'active',
-                            updated_at: new Date()
-                        },
-                        $setOnInsert: {
-                            progress_percentage: 0,
-                            enrolled_at: new Date()
-                        }
-                    },
-                    { upsert: true, new: true }
-                ).catch(err => console.error('[bulk-update] Enrollment update error:', err));
-
-                if (targetBatch) {
-                    await StudentBatch.findOneAndUpdate(
-                        { student_id: uObjId, course_id: targetCourse._id },
-                        {
-                            $set: {
-                                student_id: uObjId,
-                                course_id: targetCourse._id,
-                                batch_id: targetBatch._id,
-                                updated_at: new Date()
-                            },
-                            $setOnInsert: {
-                                assigned_at: new Date()
-                            }
-                        },
-                        { upsert: true, new: true }
-                    ).catch(err => console.error('[bulk-update] StudentBatch update error:', err));
-                }
-            }
-        }
-
-        userIds.forEach(uid => {
-            if (status === 'approved') io.to(uid.toString()).emit('user_approved');
-        });
-        if (targetCourse) {
-            io.emit('course_enrollments_changed', { courseId: targetCourse._id });
-        }
-
-        res.json({ success: true, count: userIds.length, message: `Successfully updated ${userIds.length} users to ${status}` });
-    } catch (err) {
-        handleError(res, err, 'bulk-update-user-status');
-    }
-});
-
-app.put('/api/admin/update-user-profile', authenticateToken, requireAdminOrManager, async (req, res) => {
-    const { userId, full_name, college_name, institute_name, mobile_number, course_type } = req.body;
-    if (!userId) return res.status(400).json({ error: 'Missing userId' });
-
-    try {
-        const userObjId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : null;
-        
-        // Update User model
-        const userUpdate = {};
-        if (full_name !== undefined) userUpdate.full_name = full_name;
-        if (mobile_number !== undefined) userUpdate.phone = mobile_number;
-        
-        if (Object.keys(userUpdate).length > 0) {
-            await User.updateOne(
-                { $or: [{ _id: userId }, { _id: userObjId }].filter(Boolean) },
-                { $set: userUpdate }
-            );
-        }
-
-        // Update Profile model
-        const profileUpdate = { updated_at: new Date() };
-        if (full_name !== undefined) profileUpdate.full_name = full_name;
-        if (college_name !== undefined) profileUpdate.college_name = college_name;
-        if (institute_name !== undefined) profileUpdate.institute_name = institute_name;
-        if (mobile_number !== undefined) profileUpdate.mobile_number = mobile_number;
-        if (course_type !== undefined) profileUpdate.course_type = course_type;
-
-        const updatedProfile = await Profile.findOneAndUpdate(
-            { $or: [{ user_id: userId }, { user_id: userObjId }].filter(Boolean) },
-            { $set: profileUpdate },
-            { new: true, upsert: true }
-        );
-
-        // Also ensure college is registered in College collection if provided
-        if (college_name && typeof college_name === 'string' && college_name.trim()) {
-            const trimmedCollege = college_name.trim();
-            try {
-                const escaped = trimmedCollege.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const existing = await College.findOne({ name: { $regex: new RegExp(`^${escaped}$`, 'i') } });
-                if (!existing) {
-                    await College.create({ name: trimmedCollege });
-                }
-            } catch (cErr) {
-                console.error('[Admin] College auto-sync error:', cErr.message);
-            }
-        }
-
-        res.json({
-            success: true,
-            message: 'User profile updated successfully',
-            profile: updatedProfile
-        });
-    } catch (err) {
-        handleError(res, err, 'update-user-profile');
-    }
-});
-
-// Get comprehensive list of all colleges (from College collection and Profile collection)
-app.get('/api/admin/colleges-list', authenticateToken, requireAdminOrManager, async (req, res) => {
-    try {
-        const dbColleges = await College.find({}).select('name').lean();
-        const profileColleges = await Profile.distinct('college_name');
-
-        const set = new Set();
-        dbColleges.forEach(c => {
-            if (c.name && c.name.trim()) set.add(c.name.trim());
-        });
-        profileColleges.forEach(c => {
-            if (c && typeof c === 'string' && c.trim()) set.add(c.trim());
-        });
-
-        const sorted = Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-        res.json(sorted);
-    } catch (err) {
-        handleError(res, err, 'admin-colleges-list');
     }
 });
 
@@ -3001,7 +2491,7 @@ app.get('/api/admin/course-enrollments/:courseId', authenticateToken, requireAdm
     }
 });
 
-app.get('/api/admin/instructors', authenticateToken, requireInstructor, async (req, res) => {
+app.get('/api/admin/instructors', authenticateToken, requireAdminOrManager, async (req, res) => {
     try {
         // 1. Get everyone with instructor role
         const roleUsers = await UserRole.find({ role: 'instructor' });
@@ -4405,22 +3895,10 @@ app.post('/api/instructor/choose-course', authenticateToken, requireInstructor, 
 app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (req, res) => {
     try {
         const { all } = req.query;
-        const userIdStr = req.user.id ? req.user.id.toString() : '';
-        const userIdObj = mongoose.Types.ObjectId.isValid(userIdStr) ? new mongoose.Types.ObjectId(userIdStr) : null;
-        const userMatchIds = [userIdStr, userIdObj].filter(Boolean);
-
-        // Find courses where instructor has a batch assigned
-        const myBatchDocs = await Batch.find({ instructor_id: { $in: userMatchIds } }).select('course_id').lean();
-        const batchCourseIds = myBatchDocs.map(b => b.course_id).filter(Boolean);
-        const batchCourseIdStrs = batchCourseIds.map(id => id.toString());
-        const batchCourseIdObjs = batchCourseIdStrs.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
-        const allBatchCourseMatchIds = [...new Set([...batchCourseIdStrs, ...batchCourseIdObjs])];
-
         let query = {
             $or: [
-                { instructor_id: { $in: userMatchIds } },
-                { instructor_ids: { $in: userMatchIds } },
-                { _id: { $in: allBatchCourseMatchIds } }
+                { instructor_id: req.user.id },
+                { instructor_ids: req.user.id }
             ]
         };
 
@@ -4430,27 +3908,24 @@ app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (
 
         const courses = await Course.find(query).sort({ updated_at: -1 }).lean();
         const courseIds = courses.map(c => c._id);
-        const courseIdStrs = courseIds.map(id => id.toString());
-        const courseIdObjs = courseIdStrs.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
-        const allCourseMatchIds = [...new Set([...courseIdStrs, ...courseIdObjs])];
 
         // Fetch ALL batches to see locks
         const allBatches = await Batch.find({
-            course_id: { $in: allCourseMatchIds },
+            course_id: { $in: courseIds },
             status: { $in: ['pending', 'approved'] }
         }).select('course_id batch_type').lean();
 
         // Fetch SPECIFIC batches for this instructor to see THEIR assignment
         const myBatches = await Batch.find({
-            course_id: { $in: allCourseMatchIds },
-            instructor_id: { $in: userMatchIds }
+            course_id: { $in: courseIds },
+            instructor_id: req.user.id
         }).lean();
 
         // Map data
         const data = courses.map(course => {
             const courseIdStr = course._id.toString();
-            const locks = allBatches.filter(b => b.course_id?.toString() === courseIdStr);
-            const myMatch = myBatches.find(b => b.course_id?.toString() === courseIdStr);
+            const locks = allBatches.filter(b => b.course_id.toString() === courseIdStr);
+            const myMatch = myBatches.find(b => b.course_id.toString() === courseIdStr);
 
             const occupiedSessions = [...new Set(locks.map(b => b.batch_type))];
 
@@ -4459,7 +3934,7 @@ app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (
                 id: course._id,
                 occupied_sessions: occupiedSessions,
                 assigned_session: myMatch?.batch_type, // 'morning', 'afternoon', etc.
-                is_approved: myMatch ? (myMatch.status === 'approved') : true
+                is_approved: myMatch?.status === 'approved'
             };
         });
 
@@ -5595,35 +5070,28 @@ app.get('/api/student/accessible-exams', authenticateToken, async (req, res) => 
             return false;
         };
 
-        // 3. Get implicitly accessible exams (live/scheduled) and mocks via enrolled courses ONLY
-        const courseExams = (enrolledCourseIds && enrolledCourseIds.length > 0) 
-            ? await Exam.find({
-                course_id: { $in: enrolledCourseIds },
-                approval_status: 'approved',
-                status: 'active'
-            }).lean()
-            : [];
+        // 3. Get implicitly accessible exams (live/scheduled) and mocks via courses
+        const courseExams = await Exam.find({
+            course_id: { $in: enrolledCourseIds },
+            approval_status: 'approved',
+            status: 'active'
+        }).lean();
 
-        // 4. Identify explicitly granted question bank topics
+        // 4. Identify all accessible topics (implicit from courses + explicit granted)
         const explicitQBTopics = explicitAccess
             .filter(a => a.access_type === 'question_bank' && a.question_bank_topic)
             .map(a => a.question_bank_topic);
 
-        // 5. Build the list of Question Banks (qbs) strictly for enrolled courses or explicitly granted topics
+        // 5. Build the list of Question Banks (qbs)
         const normalizedTopics = explicitQBTopics.map(t => t.trim());
-        const qbConditions = [];
-        if (enrolledCourseIds && enrolledCourseIds.length > 0) {
-            qbConditions.push({ course_id: { $in: enrolledCourseIds } });
-        }
-        if (normalizedTopics.length > 0) {
-            qbConditions.push({ topic: { $in: normalizedTopics } });
-            qbConditions.push({ topic: { $in: explicitQBTopics } });
-        }
-
-        const qbs = qbConditions.length > 0 
-            ? await QuestionBank.find({ $or: qbConditions }).lean()
-            : [];
-        console.log(`[ACL] Found ${qbs.length} matching Question Banks for student ${studentId}.`);
+        const qbs = await QuestionBank.find({
+            $or: [
+                { course_id: { $in: enrolledCourseIds }, approval_status: 'approved' },
+                { topic: { $in: normalizedTopics }, approval_status: 'approved' },
+                { topic: { $in: explicitQBTopics }, approval_status: 'approved' }
+            ]
+        }).lean();
+        console.log(`[ACL] Found ${qbs.length} matching Question Banks.`);
 
         // 5.5. Find matching exam images and metadata for these topics to show as posters
         const qbTopics = [...new Set([...qbs.map(qb => qb.topic), ...normalizedTopics])];
@@ -5799,15 +5267,10 @@ app.get('/api/student/exam-questions/:id', authenticateToken, async (req, res) =
         const isImplicit = id.startsWith('implicit_');
 
         if (isQB) {
-            const topic = id.replace('qb_', '').trim();
-            const escapedTopic = topic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // Strict anchored regex to prevent partial match collisions (e.g. "TEST" matching "Data Analytics Test" or "Testing")
+            const topic = id.replace('qb_', '');
             questions = await QuestionBank.find({
-                $or: [
-                    { topic: { $regex: new RegExp(`^${escapedTopic}$`, "i") } },
-                    { topic: topic },
-                    { course_id: mongoose.Types.ObjectId.isValid(topic) ? topic : null }
-                ]
+                topic,
+                approval_status: 'approved'
             }).lean();
         } else {
             const cleanId = id.replace('implicit_', '').trim();
@@ -5821,66 +5284,28 @@ app.get('/api/student/exam-questions/:id', authenticateToken, async (req, res) =
             if (source && (source.questions || []).length > 0) {
                 questions = source.questions || [];
             } else {
-                // Check if this student has an explicit grant record with an assigned topic
-                let grantedTopic = null;
-                if (req.user?.id && mongoose.Types.ObjectId.isValid(cleanId)) {
-                    const access = await StudentExamAccess.findOne({
-                        student_id: req.user.id,
-                        $or: [{ exam_id: cleanId }, { mock_paper_id: cleanId }]
-                    }).select('question_bank_topic').lean();
-                    if (access && access.question_bank_topic) {
-                        grantedTopic = access.question_bank_topic.trim();
-                    }
-                }
-
                 // Try as Exam (Modern Unified Flow)
                 const exam = mongoose.Types.ObjectId.isValid(cleanId)
                     ? await Exam.findById(cleanId).lean()
                     : null;
 
                 if (exam) {
-                    const candidateTopics = [];
-                    if (grantedTopic) candidateTopics.push(grantedTopic);
-                    if (exam.topics && Array.isArray(exam.topics) && exam.topics.length > 0) {
-                        candidateTopics.push(...exam.topics.map(t => t.trim()));
-                    }
-                    if (exam.source_topic && exam.source_topic.trim()) {
-                        candidateTopics.push(exam.source_topic.trim());
-                    }
-                    if (exam.title && exam.title.trim()) {
-                        candidateTopics.push(exam.title.trim());
-                    }
-
-                    const uniqueTopics = [...new Set(candidateTopics.filter(Boolean))];
-                    // Strict anchored exact regexes to ensure ONLY the intended questions are retrieved
-                    const exactTopicRegexes = uniqueTopics.map(t => new RegExp(`^${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'));
+                    // Fetch by topics array OR by exam title (Sync Fallback)
+                    const searchTopics = (exam.topics && exam.topics.length > 0)
+                        ? exam.topics
+                        : [exam.title];
 
                     questions = await QuestionBank.find({
-                        $or: [
-                            { exam_id: exam._id },
-                            { exam_id: exam._id.toString() },
-                            { topic: { $in: exactTopicRegexes } },
-                            { topic: { $in: uniqueTopics } }
-                        ]
-                    }).lean();
-
-                    // Fallback only if exact match found 0 questions
-                    if (questions.length === 0 && uniqueTopics.length > 0) {
-                        const looseRegexes = uniqueTopics.map(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-                        questions = await QuestionBank.find({ topic: { $in: looseRegexes } }).lean();
-                    }
-
-                    if (exam.total_questions && exam.total_questions > 0) {
-                        questions = questions.slice(0, exam.total_questions);
-                    }
-                } else {
-                    // Try cleanId as a direct topic name
-                    const escapedId = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        topic: { $in: searchTopics },
+                        approval_status: 'approved'
+                    })
+                        .limit(exam.total_questions || 50)
+                        .lean();
+                } else if (isImplicit) {
+                    // If we still didn't find it but it's marked implicit, it might be a QB topic that leaked through
                     questions = await QuestionBank.find({
-                        $or: [
-                            { topic: { $regex: new RegExp(`^${escapedId}$`, "i") } },
-                            { topic: cleanId }
-                        ]
+                        topic: cleanId,
+                        approval_status: 'approved'
                     }).lean();
                 }
             }
@@ -5893,24 +5318,8 @@ app.get('/api/student/exam-questions/:id', authenticateToken, async (req, res) =
         const data = questions.map(q => ({
             id: q._id,
             text: q.question_text,
-            question_text: q.question_text,
             type: q.type,
-            question_type: q.type,
-            language: q.language || 'python',
-            difficulty: q.difficulty || 'medium',
-            input_format: q.input_format,
-            output_format: q.output_format,
-            explanation: q.explanation,
-            constraints: q.constraints,
-            sample_input: q.sample_input,
-            sample_output: q.sample_output,
-            test_cases: (q.test_cases || []).map(tc => ({
-                input: tc.input,
-                expected_output: tc.expected_output,
-                explanation: tc.explanation,
-                is_hidden: tc.is_hidden
-            })),
-            options: (q.options || []).map(opt => ({ id: opt._id || Math.random(), text: typeof opt === 'string' ? opt : opt.text })),
+            options: q.options.map(opt => ({ id: opt._id || Math.random(), text: opt.text })),
             // Do NOT send is_correct to frontend during exam
             marks: q.marks || 1
         }));
@@ -6456,29 +5865,15 @@ app.post('/api/student/submit-exam', authenticateToken, async (req, res) => {
             resolvedCourseId = questions.find(q => q.course_id)?.course_id;
         }
 
-        // Build snapshot with human-readable student answer text (resolving option ID to text)
-        const questions_snapshot = questions.map(q => {
-            const rawAns = answers[q._id.toString()] || "";
-            let answerText = rawAns;
-            if (q.options && Array.isArray(q.options) && rawAns) {
-                const optMatch = q.options.find(o =>
-                    (o._id && o._id.toString() === rawAns) ||
-                    (typeof o === 'string' && o === rawAns) ||
-                    o.text === rawAns
-                );
-                if (optMatch) {
-                    answerText = typeof optMatch === 'string' ? optMatch : optMatch.text;
-                }
-            }
-            return {
-                question_id: q._id,
-                question_text: q.question_text,
-                type: q.type,
-                correct_answer: q.correct_answer || (q.options ? q.options.find(o => o.is_correct)?.text : ""),
-                marks: q.marks || 1,
-                student_answer: answerText
-            };
-        });
+        // Build snapshot
+        const questions_snapshot = questions.map(q => ({
+            question_id: q._id,
+            question_text: q.question_text,
+            type: q.type,
+            correct_answer: q.correct_answer || (q.options ? q.options.find(o => o.is_correct)?.text : ""),
+            marks: q.marks || 1,
+            student_answer: answers[q._id.toString()] || ""
+        }));
 
         const result = await ExamResult.create({
             student_id: req.user.id,
@@ -6608,269 +6003,6 @@ app.post('/api/instructor/grade-result/:resultId', authenticateToken, requireIns
         res.json({ message: 'Result graded successfully', result });
     } catch (err) {
         handleError(res, err, 'grade-result');
-    }
-});
-
-// 2b. Get All Student Mock Paper / Exam Results (Instructor & Admin)
-app.get('/api/instructor/student-results', authenticateToken, async (req, res) => {
-    try {
-        const userRole = await getUserRole(req.user.id);
-        if (!['admin', 'manager', 'instructor'].includes(userRole)) {
-            return res.status(403).json({ error: 'Access denied' });
-        }
-
-        const { course_id, search, status } = req.query;
-
-        // 1. Determine allowed course IDs and titles
-        let allowedCourseIds = [];
-        let allowedCourseTitles = [];
-
-        if (userRole === 'instructor') {
-            const instructorCourses = await Course.find({
-                $or: [
-                    { instructor_id: req.user.id },
-                    { instructor_ids: req.user.id }
-                ]
-            }).select('_id title').lean();
-
-            allowedCourseIds = instructorCourses.map(c => c._id);
-            allowedCourseTitles = instructorCourses.map(c => c.title);
-
-            // Also include courses from instructor's assigned batches
-            const instructorBatches = await Batch.find({ instructor_id: req.user.id }).select('course_id').lean();
-            for (const b of instructorBatches) {
-                if (b.course_id && !allowedCourseIds.some(id => id.toString() === b.course_id.toString())) {
-                    allowedCourseIds.push(b.course_id);
-                    const c = await Course.findById(b.course_id).select('title').lean();
-                    if (c?.title) allowedCourseTitles.push(c.title);
-                }
-            }
-        } else {
-            // Admin or manager can access all courses
-            const allCourses = await Course.find().select('_id title').lean();
-            allowedCourseIds = allCourses.map(c => c._id);
-            allowedCourseTitles = allCourses.map(c => c.title);
-        }
-
-        // 2. Build query
-        let query = {};
-
-        if (course_id && course_id !== 'all') {
-            const targetCourse = await Course.findById(course_id).select('title _id').lean();
-            const targetCourseTitle = targetCourse ? targetCourse.title : '';
-
-            // Find exams associated with this course
-            const courseExams = await Exam.find({ course_id }).select('_id').lean();
-            const examIds = courseExams.map(e => e._id);
-
-            const orConditions = [
-                { course_id: course_id },
-                { exam_id: { $in: examIds } },
-                { mock_paper_id: { $in: examIds } }
-            ];
-
-            if (targetCourseTitle) {
-                orConditions.push({ test_title: { $regex: new RegExp(`^${targetCourseTitle}$`, 'i') } });
-                orConditions.push({ test_title: { $regex: new RegExp(targetCourseTitle, 'i') } });
-            }
-
-            query['$or'] = orConditions;
-        } else if (userRole === 'instructor') {
-            const exams = await Exam.find({ course_id: { $in: allowedCourseIds } }).select('_id').lean();
-            const examIds = exams.map(e => e._id);
-
-            query['$or'] = [
-                { course_id: { $in: allowedCourseIds } },
-                { exam_id: { $in: examIds } },
-                { mock_paper_id: { $in: examIds } },
-                { test_title: { $in: allowedCourseTitles } }
-            ];
-        }
-
-        // 3. Fetch results
-        let examResults = await ExamResult.find(query)
-            .populate('student_id', 'full_name email avatar_url phone')
-            .populate('exam_id', 'title exam_type duration_minutes total_marks passing_marks course_id')
-            .populate('mock_paper_id', 'title')
-            .populate('course_id', 'title category')
-            .sort({ submitted_at: -1 })
-            .lean();
-
-        // Filter out records where student no longer exists
-        examResults = examResults.filter(r => r.student_id);
-
-        // Fetch profiles for college names
-        const studentIds = [...new Set(examResults.map(r => r.student_id?._id?.toString()).filter(Boolean))];
-        const profiles = await Profile.find({ user_id: { $in: studentIds } }).select('user_id college_name institute_name').lean();
-        const profileMap = new Map();
-        profiles.forEach(p => {
-            if (p.user_id) profileMap.set(p.user_id.toString(), p.college_name || p.institute_name || '');
-        });
-
-        // Fetch student batches
-        const studentBatches = await StudentBatch.find({ student_id: { $in: studentIds } })
-            .populate('batch_id', 'batch_name batch_type')
-            .lean();
-        const batchMap = new Map();
-        studentBatches.forEach(sb => {
-            if (sb.student_id && sb.course_id && sb.batch_id) {
-                const key = `${sb.student_id.toString()}_${sb.course_id.toString()}`;
-                batchMap.set(key, sb.batch_id);
-            }
-        });
-
-        // Map course title fallbacks
-        const allCourseDocs = await Course.find().select('_id title').lean();
-        const courseTitleMap = new Map();
-        allCourseDocs.forEach(c => courseTitleMap.set(c._id.toString(), c.title));
-
-        // Collect all question IDs across all snapshots to resolve option IDs to human-readable text
-        const allQids = [];
-        examResults.forEach(r => {
-            (r.questions_snapshot || []).forEach(qs => {
-                if (qs.question_id) allQids.push(qs.question_id);
-            });
-        });
-
-        const qbDocs = allQids.length > 0
-            ? await QuestionBank.find({ _id: { $in: allQids } }).select('options correct_answer question_text type').lean()
-            : [];
-        const qbMap = new Map();
-        qbDocs.forEach(q => qbMap.set(q._id.toString(), q));
-
-        let formattedResults = examResults.map(r => {
-            const sId = r.student_id?._id?.toString();
-
-            // Resolve course title and id
-            let resolvedCid = r.course_id?._id?.toString() || r.exam_id?.course_id?.toString() || null;
-            let resolvedCtitle = r.course_id?.title || (resolvedCid ? courseTitleMap.get(resolvedCid) : null);
-
-            // Fallback course resolution from test title
-            if (!resolvedCtitle && r.test_title) {
-                const matched = allCourseDocs.find(c =>
-                    r.test_title.toLowerCase().includes(c.title.toLowerCase()) ||
-                    c.title.toLowerCase().includes(r.test_title.toLowerCase())
-                );
-                if (matched) {
-                    resolvedCid = matched._id.toString();
-                    resolvedCtitle = matched.title;
-                }
-            }
-            if (!resolvedCtitle) resolvedCtitle = r.test_title || 'General Assessment';
-
-            const college = sId ? profileMap.get(sId) || '' : '';
-            const batchInfo = (sId && resolvedCid) ? batchMap.get(`${sId}_${resolvedCid}`) : null;
-
-            const percentage = Math.round(r.percentage ?? ((r.score / (r.total_questions || 1)) * 100));
-            const passingMarks = r.exam_id?.passing_marks ?? Math.ceil((r.total_questions || 10) * 0.4);
-            const passed = r.exam_id?.passing_marks ? (r.score >= passingMarks) : (percentage >= 40);
-
-            // Resolve questions_snapshot so option IDs become actual readable answer text
-            const resolvedSnapshot = (r.questions_snapshot || []).map(qs => {
-                const qbDoc = qs.question_id ? qbMap.get(qs.question_id.toString()) : null;
-                let studentAnsText = qs.student_answer || '';
-                let correctAnsText = qs.correct_answer || '';
-
-                if (qbDoc) {
-                    if (!correctAnsText) {
-                        correctAnsText = qbDoc.correct_answer || qbDoc.options?.find(o => o.is_correct)?.text || '';
-                    }
-                    if (qbDoc.options && Array.isArray(qbDoc.options) && studentAnsText) {
-                        const optMatch = qbDoc.options.find(o =>
-                            (o._id && o._id.toString() === studentAnsText) ||
-                            (typeof o === 'string' && o === studentAnsText) ||
-                            o.text === studentAnsText
-                        );
-                        if (optMatch) {
-                            studentAnsText = typeof optMatch === 'string' ? optMatch : optMatch.text;
-                        }
-                    }
-                }
-
-                const isCorrect = studentAnsText && correctAnsText &&
-                    (studentAnsText.trim().toLowerCase() === correctAnsText.trim().toLowerCase());
-
-                return {
-                    question_id: qs.question_id,
-                    question_text: qs.question_text || qbDoc?.question_text || '',
-                    type: qs.type || qbDoc?.type || 'multiple_choice',
-                    correct_answer: correctAnsText,
-                    student_answer: studentAnsText,
-                    marks: qs.marks || 1,
-                    is_correct: isCorrect,
-                    options: qbDoc?.options || []
-                };
-            });
-
-            return {
-                id: r._id,
-                student_id: sId,
-                student_name: r.student_id?.full_name || 'Student',
-                student_email: r.student_id?.email || '',
-                student_avatar: r.student_id?.avatar_url || '',
-                student_college: college,
-                batch_name: batchInfo?.batch_name || '',
-                batch_type: batchInfo?.batch_type || '',
-                course_id: resolvedCid,
-                course_title: resolvedCtitle,
-                test_title: r.test_title || r.exam_id?.title || r.mock_paper_id?.title || 'Mock Test',
-                exam_type: r.exam_id?.exam_type || 'mock',
-                score: r.score,
-                total_questions: r.total_questions || resolvedSnapshot.length || 0,
-                total_marks: r.exam_id?.total_marks || r.total_questions || 0,
-                passing_marks: passingMarks,
-                percentage,
-                passed,
-                grading_status: r.grading_status || 'graded',
-                time_spent: r.time_spent || 0,
-                submitted_at: r.submitted_at,
-                questions_count: resolvedSnapshot.length || r.total_questions || 0,
-                questions_snapshot: resolvedSnapshot
-            };
-        });
-
-        // Search filtering
-        if (search && search.trim()) {
-            const s = search.trim().toLowerCase();
-            formattedResults = formattedResults.filter(r =>
-                r.student_name.toLowerCase().includes(s) ||
-                r.student_email.toLowerCase().includes(s) ||
-                r.test_title.toLowerCase().includes(s) ||
-                r.course_title.toLowerCase().includes(s) ||
-                r.student_college.toLowerCase().includes(s)
-            );
-        }
-
-        // Status filtering
-        if (status === 'passed') {
-            formattedResults = formattedResults.filter(r => r.passed);
-        } else if (status === 'failed') {
-            formattedResults = formattedResults.filter(r => !r.passed);
-        } else if (status === 'pending') {
-            formattedResults = formattedResults.filter(r => r.grading_status === 'pending');
-        }
-
-        // Compute summary metrics
-        const totalSubmissions = formattedResults.length;
-        const uniqueStudents = new Set(formattedResults.map(r => r.student_id)).size;
-        const totalScorePct = formattedResults.reduce((acc, curr) => acc + (curr.percentage || 0), 0);
-        const avgPercentage = totalSubmissions > 0 ? Math.round(totalScorePct / totalSubmissions) : 0;
-        const passedCount = formattedResults.filter(r => r.passed).length;
-        const passRate = totalSubmissions > 0 ? Math.round((passedCount / totalSubmissions) * 100) : 0;
-        const topScore = totalSubmissions > 0 ? Math.max(...formattedResults.map(r => r.percentage || 0)) : 0;
-
-        res.json({
-            summary: {
-                total_submissions: totalSubmissions,
-                unique_students: uniqueStudents,
-                avg_percentage: avgPercentage,
-                pass_rate: passRate,
-                top_score: topScore
-            },
-            results: formattedResults
-        });
-    } catch (err) {
-        handleError(res, err, 'instructor-student-results');
     }
 });
 
@@ -7141,34 +6273,45 @@ createCourseResourceRoutes('resources', Resource);
 
 app.get('/api/courses/:courseId/roster', authenticateToken, requireInstructor, async (req, res) => {
     try {
-        const courseIdStr = req.params.courseId;
-        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
-        const courseMatchIds = [courseIdStr, courseIdObj].filter(Boolean);
+        const role = await getUserRole(req.user.id);
+        let enrollmentQuery = { course_id: req.params.courseId };
 
-        const enrollments = await Enrollment.find({ course_id: { $in: courseMatchIds } })
+        // SECURITY: If instructor, first find WHICH students are in THEIR batches
+        if (role === 'instructor') {
+            const myBatches = await Batch.find({
+                course_id: req.params.courseId,
+                instructor_id: req.user.id
+            }).select('_id').lean();
+
+            const myBatchIds = myBatches.map(b => b._id);
+            const myStudentAssignments = await StudentBatch.find({
+                batch_id: { $in: myBatchIds }
+            }).select('student_id').lean();
+
+            const myStudentIds = myStudentAssignments.map(a => a.student_id);
+            enrollmentQuery.user_id = { $in: myStudentIds };
+        }
+
+        const enrollments = await Enrollment.find(enrollmentQuery)
             .populate('user_id', 'full_name email phone avatar_url')
             .lean();
 
-        const userIds = enrollments.map(e => {
-            const u = e.user_id;
-            return typeof u === 'object' && u ? (u._id?.toString() || u.id?.toString()) : u?.toString();
-        }).filter(Boolean);
-
-        const userIdObjs = userIds.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
-        const allUserMatchIds = [...new Set([...userIds, ...userIdObjs])];
+        // Fetch profiles separately if needed, or join if possible. 
+        // For now, let's just get the basic user info and use the Profile model if mobile_number is there.
+        const userIds = enrollments.map(e => e.user_id?._id).filter(id => id);
 
         const [profiles, batchAssignments] = await Promise.all([
-            Profile.find({ user_id: { $in: allUserMatchIds } }).lean(),
-            StudentBatch.find({ course_id: { $in: courseMatchIds }, student_id: { $in: allUserMatchIds } }).populate('batch_id').lean()
+            Profile.find({ user_id: { $in: userIds } }).lean(),
+            StudentBatch.find({ course_id: req.params.courseId, student_id: { $in: userIds } }).populate('batch_id').lean()
         ]);
 
         const profileMap = profiles.reduce((acc, p) => {
-            if (p.user_id) acc[p.user_id.toString()] = p;
+            acc[p.user_id.toString()] = p;
             return acc;
         }, {});
 
         const batchMap = batchAssignments.reduce((acc, sb) => {
-            if (sb.student_id) acc[sb.student_id.toString()] = sb.batch_id;
+            acc[sb.student_id.toString()] = sb.batch_id;
             return acc;
         }, {});
 
@@ -7177,18 +6320,17 @@ app.get('/api/courses/:courseId/roster', authenticateToken, requireInstructor, a
         const seenUserIds = new Set();
 
         enrollments.forEach(e => {
-            const userObj = typeof e.user_id === 'object' && e.user_id ? e.user_id : {};
-            const userIdStr = userObj._id ? userObj._id.toString() : (e.user_id ? e.user_id.toString() : '');
+            const userIdStr = e.user_id?._id?.toString();
             if (!userIdStr || seenUserIds.has(userIdStr)) return;
             seenUserIds.add(userIdStr);
             const profile = profileMap[userIdStr] || null;
 
             uniqueRoster.push({
-                id: userIdStr,
-                full_name: profile?.full_name || userObj.full_name || 'Enrolled Student',
-                email: profile?.email || userObj.email || '',
-                mobile_number: profile?.mobile_number || profile?.phone || userObj.phone || '',
-                avatar_url: profile?.avatar_url || userObj.avatar_url || null,
+                id: e.user_id?._id,
+                full_name: e.user_id?.full_name || profile?.full_name || 'Unknown Student',
+                email: e.user_id?.email || profile?.email || '',
+                mobile_number: profile?.mobile_number || e.user_id?.phone || '',
+                avatar_url: e.user_id?.avatar_url || profile?.avatar_url || null,
                 role: 'student',
                 batch: batchMap[userIdStr] || null,
                 status: e.status,
@@ -7349,7 +6491,7 @@ app.delete('/api/notifications/:id', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/admin/students', authenticateToken, requireInstructor, async (req, res) => {
+app.get('/api/admin/students', authenticateToken, requireAdminOrManager, async (req, res) => {
     try {
         // Include both students AND interns
         const studentRoles = await UserRole.find({ role: { $in: ['student', 'intern'] } }).select('user_id role');
@@ -7427,17 +6569,19 @@ app.get('/api/data/:table', authenticateToken, async (req, res) => {
         let limit = 100;
         let skip = 0;
 
-        // Utility to expand hex strings into both String and ObjectId for dual matching
-        const expandId = (val) => {
-            const strVal = val ? val.toString().trim() : '';
-            if (typeof strVal === 'string' && strVal.length === 24 && /^[0-9a-fA-F]{24}$/.test(strVal)) {
+        // Utility to convert hex strings to ObjectId if they look like one
+        const tryConvertId = (val) => {
+            if (typeof val === 'string' && val.length === 24 && /^[0-9a-fA-F]{24}$/.test(val)) {
                 try {
-                    return [strVal, new mongoose.Types.ObjectId(strVal)];
+                    // Only convert if it's explicitly used for an ID field like _id, student_id, etc.
+                    // For generic queries, we'll try to convert but catch any potential issues.
+                    return new mongoose.Types.ObjectId(val);
                 } catch (e) {
-                    return [strVal];
+                    console.warn(`[tryConvertId] Failed to convert ${val}:`, e.message);
+                    return val;
                 }
             }
-            return [strVal];
+            return val;
         };
 
         // Filter Logic
@@ -7447,20 +6591,16 @@ app.get('/api/data/:table', authenticateToken, async (req, res) => {
             const filterKey = key === 'id' ? '_id' : key;
             const valStr = value.toString();
             if (valStr.startsWith('eq.')) {
-                const rawVal = valStr.slice(3);
-                const expanded = expandId(rawVal);
-                query[filterKey] = expanded.length > 1 ? { $in: expanded } : expanded[0];
+                query[filterKey] = tryConvertId(valStr.slice(3));
             } else if (valStr.startsWith('in.')) {
                 const ids = valStr.slice(4, -1).split(',');
-                const expandedIds = ids.flatMap(id => expandId(id));
-                query[filterKey] = { $in: expandedIds };
+                query[filterKey] = { $in: ids.map(id => tryConvertId(id.trim())) };
             } else if (valStr.startsWith('lt.')) {
                 query[filterKey] = { $lt: valStr.slice(3) };
             } else if (valStr.startsWith('gt.')) {
                 query[filterKey] = { $gt: valStr.slice(3) };
             } else {
-                const expanded = expandId(valStr);
-                query[filterKey] = expanded.length > 1 ? { $in: expanded } : expanded[0];
+                query[filterKey] = tryConvertId(valStr); // Default exact match
             }
         }
 
@@ -8322,28 +7462,10 @@ app.get('/api/batches/student-assignments', authenticateToken, requireInstructor
             query.course_id = courseQuery;
         }
 
-        // --- SECURITY: Filter by instructor's assigned batches and assigned courses ---
+        // --- SECURITY: Filter by instructor's assigned batches ---
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
-            const userObjId = mongoose.Types.ObjectId.isValid(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : null;
-            const assignedCourses = await Course.find({
-                $or: [
-                    { instructor_ids: req.user.id },
-                    { instructor_ids: userObjId },
-                    { instructor_id: req.user.id },
-                    { instructor_id: userObjId }
-                ]
-            }).select('_id');
-            const assignedCourseIds = assignedCourses.map(c => c._id);
-            const assignedCourseIdStrs = assignedCourses.map(c => c._id.toString());
-
-            const myBatches = await Batch.find({
-                $or: [
-                    { instructor_id: req.user.id },
-                    { instructor_id: userObjId },
-                    { course_id: { $in: [...assignedCourseIds, ...assignedCourseIdStrs] } }
-                ]
-            }).select('_id').lean();
+            const myBatches = await Batch.find({ instructor_id: req.user.id }).select('_id').lean();
             const myBatchIds = myBatches.map(b => b._id);
             query.batch_id = { $in: myBatchIds };
         }
@@ -8369,39 +7491,26 @@ app.get('/api/batches', authenticateToken, async (req, res) => {
         }
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
-            const userObjId = mongoose.Types.ObjectId.isValid(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : null;
-            const assignedCourses = await Course.find({
-                $or: [
-                    { instructor_ids: req.user.id },
-                    { instructor_ids: userObjId },
-                    { instructor_id: req.user.id },
-                    { instructor_id: userObjId }
-                ]
-            }).select('_id');
-            const assignedCourseIds = assignedCourses.map(c => c._id);
-            const assignedCourseIdStrs = assignedCourses.map(c => c._id.toString());
-
-            filter.$or = [
-                { instructor_id: req.user.id },
-                { instructor_id: userObjId },
-                { course_id: { $in: [...assignedCourseIds, ...assignedCourseIdStrs] } }
-            ];
+            if (req.query.course_id) {
+                // Check if they are authorized for this course
+                const course = await Course.findById(req.query.course_id);
+                if (course && (course.instructor_ids || []).some(id => id.toString() === req.user.id)) {
+                    filter.course_id = req.query.course_id;
+                    filter.instructor_id = req.user.id;
+                } else {
+                    filter.instructor_id = req.user.id;
+                }
+            } else {
+                filter.instructor_id = req.user.id;
+            }
         }
         if (req.query.is_active !== undefined) filter.is_active = req.query.is_active === 'true';
 
         const batches = await Batch.find(filter).sort({ batch_type: 1, batch_name: 1 }).lean();
 
         const finalBatches = await Promise.all(batches.map(async (b) => {
-            const bIdStr = b._id.toString();
-            const bObjId = mongoose.Types.ObjectId.isValid(bIdStr) ? new mongoose.Types.ObjectId(bIdStr) : null;
-            const count = await StudentBatch.countDocuments({
-                $or: [
-                    { batch_id: b._id },
-                    { batch_id: bIdStr },
-                    { batch_id: bObjId }
-                ]
-            });
-            return { ...b, id: bIdStr, student_count: count };
+            const count = await StudentBatch.countDocuments({ batch_id: b._id });
+            return { ...b, id: b._id.toString(), student_count: count };
         }));
 
         res.json(finalBatches);
@@ -8542,21 +7651,16 @@ app.delete('/api/batches/:id', authenticateToken, requireInstructor, async (req,
 // Get current student's batch for a specific course
 app.get('/api/batches/my-batch/:courseId', authenticateToken, async (req, res) => {
     try {
-        const courseIdStr = req.params.courseId;
-        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
-        const studentIdStr = req.user.id;
-        const studentIdObj = mongoose.Types.ObjectId.isValid(studentIdStr) ? new mongoose.Types.ObjectId(studentIdStr) : null;
-
         const assignment = await StudentBatch.findOne({
-            student_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
-            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
+            student_id: req.user.id,
+            course_id: req.params.courseId
         }).populate('batch_id').lean();
 
-        if (!assignment || !assignment.batch_id) return res.json(null);
+        if (!assignment) return res.json(null);
 
         const enrollment = await Enrollment.findOne({
-            user_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
-            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
+            user_id: req.user.id,
+            course_id: req.params.courseId
         }).select('requested_batch_type').lean();
 
         res.json({
@@ -8574,41 +7678,28 @@ app.get('/api/batches/my-batch/:courseId', authenticateToken, async (req, res) =
 // Get full course roster for instructors, grouped by batch type
 app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstructor, async (req, res) => {
     try {
-        const courseIdStr = req.params.courseId;
-        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
-        const courseMatchIds = [courseIdStr, courseIdObj].filter(Boolean);
+        // Convert courseId to ObjectId for proper MongoDB query
+        const courseId = new mongoose.Types.ObjectId(req.params.courseId);
 
         // Get all course enrollments (students) regardless of status
         const enrollments = await Enrollment.find({
-            course_id: { $in: courseMatchIds }
+            course_id: courseId
         }).lean();
 
-        const rawStudentIds = enrollments.map(e => e.user_id?.toString() || e.student_id?.toString()).filter(Boolean);
-        const studentIdObjs = rawStudentIds.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
-        const studentIdStrs = rawStudentIds.map(id => id.toString());
-        const allStudentMatchIds = [...new Set([...studentIdStrs, ...studentIdObjs])];
+        const studentIds = enrollments.map(e => e.user_id).filter(id => id);
 
         // --- SECURITY: Filter assignments by instructor if requested by instructor ---
         const userRole = await getUserRole(req.user.id);
         let assignmentQuery = {
-            course_id: { $in: courseMatchIds },
-            student_id: { $in: allStudentMatchIds }
+            course_id: courseId,
+            student_id: { $in: studentIds }
         };
 
         // Fetch ALL assignments first, then filter instructor's own batches separately
         const allAssignments = await StudentBatch.find(assignmentQuery).populate('batch_id').lean();
 
         // Get instructor's batch IDs for permission checking
-        const userIdStr = req.user.id.toString();
-        const userIdObj = mongoose.Types.ObjectId.isValid(userIdStr) ? new mongoose.Types.ObjectId(userIdStr) : null;
-        const userMatchIds = [userIdStr, userIdObj].filter(Boolean);
-
-        const myBatches = await Batch.find({
-            $or: [
-                { instructor_id: { $in: userMatchIds } },
-                { course_id: { $in: courseMatchIds } }
-            ]
-        }).select('_id').lean();
+        const myBatches = await Batch.find({ instructor_id: req.user.id }).select('_id').lean();
         const myBatchIds = new Set(myBatches.map(b => b._id.toString()));
 
         // Map assignments with batch ownership flag
@@ -8618,8 +7709,8 @@ app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstru
         }));
 
         // Get profiles and roles
-        const profiles = await Profile.find({ user_id: { $in: allStudentMatchIds } }).lean();
-        const users = await User.find({ _id: { $in: studentIdObjs } }).select('full_name email role avatar_url').lean();
+        const profiles = await Profile.find({ user_id: { $in: studentIds } }).lean();
+        const users = await User.find({ _id: { $in: studentIds } }).select('full_name email role avatar_url').lean();
 
         const profileMap = profiles.reduce((acc, p) => {
             if (p.user_id) acc[p.user_id.toString()] = p;
@@ -8631,21 +7722,19 @@ app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstru
             return acc;
         }, {});
 
-        const roles = await UserRole.find({ user_id: { $in: allStudentMatchIds } }).lean();
-        const roleMap = roles.reduce((acc, r) => { if (r.user_id) acc[r.user_id.toString()] = r.role; return acc; }, {});
+        const roles = await UserRole.find({ user_id: { $in: studentIds } }).lean();
+        const roleMap = roles.reduce((acc, r) => { acc[r.user_id?.toString()] = r.role; return acc; }, {});
 
         const assignmentMap = assignments.reduce((acc, a) => {
-            if (a.student_id) {
-                acc[a.student_id.toString()] = {
-                    batch: a.batch_id,
-                    session: a.assigned_session
-                };
-            }
+            acc[a.student_id?.toString()] = {
+                batch: a.batch_id,
+                session: a.assigned_session
+            };
             return acc;
         }, {});
 
         const rosterData = enrollments.map(e => {
-            const uid = e.user_id ? e.user_id.toString() : (e.student_id ? e.student_id.toString() : null);
+            const uid = e.user_id ? e.user_id.toString() : null;
             if (!uid) return null;
 
             const user = userMap[uid];
@@ -8696,23 +7785,12 @@ app.get('/api/batches/course-roster/:courseId', authenticateToken, requireInstru
 // List students in a batch (with profile info)
 app.get('/api/batches/:batchId/students', authenticateToken, requireInstructor, async (req, res) => {
     try {
-        const batchIdStr = req.params.batchId;
-        const batchObjId = mongoose.Types.ObjectId.isValid(batchIdStr) ? new mongoose.Types.ObjectId(batchIdStr) : null;
-        const assignments = await StudentBatch.find({
-            $or: [
-                { batch_id: batchIdStr },
-                { batch_id: batchObjId }
-            ]
-        }).lean();
+        const assignments = await StudentBatch.find({ batch_id: req.params.batchId }).lean();
         const studentIds = assignments.map(a => a.student_id);
 
-        const studentObjIds = studentIds.map(id => mongoose.Types.ObjectId.isValid(id?.toString()) ? new mongoose.Types.ObjectId(id?.toString()) : id);
-        const studentStrs = studentIds.map(id => id?.toString());
-        const allStudentIds = Array.from(new Set([...studentObjIds, ...studentStrs]));
-
         const [profiles, users] = await Promise.all([
-            Profile.find({ user_id: { $in: allStudentIds } }).lean(),
-            User.find({ _id: { $in: allStudentIds } }).select('full_name email avatar_url').lean()
+            Profile.find({ user_id: { $in: studentIds } }).lean(),
+            User.find({ _id: { $in: studentIds } }).select('full_name email').lean()
         ]);
 
         const profileMap = profiles.reduce((acc, p) => { acc[p.user_id?.toString()] = p; return acc; }, {});
@@ -8843,12 +7921,7 @@ app.put('/api/batches/students/reassign', authenticateToken, requireInstructor, 
 // Get available batches for a course (student view)
 app.get('/api/batches/course/:courseId', authenticateToken, async (req, res) => {
     try {
-        const courseIdStr = req.params.courseId;
-        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
-        const filter = {
-            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) },
-            status: { $ne: 'rejected' }
-        };
+        const filter = { course_id: req.params.courseId, status: { $ne: 'rejected' } };
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
             filter.instructor_id = req.user.id;
@@ -9279,97 +8352,6 @@ app.post('/api/batches/request/:courseId', authenticateToken, async (req, res) =
     }
 });
 
-// Student Automatic Self-Assign to a Batch
-app.post('/api/batches/student-self-assign', authenticateToken, async (req, res) => {
-    try {
-        const student_id = req.user.id;
-        const { course_id, batch_id } = req.body;
-        if (!course_id || !batch_id) {
-            return res.status(400).json({ error: 'course_id and batch_id are required' });
-        }
-
-        const studentIdStr = student_id.toString();
-        const studentIdObj = mongoose.Types.ObjectId.isValid(studentIdStr) ? new mongoose.Types.ObjectId(studentIdStr) : null;
-        const courseIdStr = course_id.toString();
-        const courseIdObj = mongoose.Types.ObjectId.isValid(courseIdStr) ? new mongoose.Types.ObjectId(courseIdStr) : null;
-
-        // Verify student is enrolled in this course
-        const isEnrolled = await Enrollment.findOne({
-            user_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
-            course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
-        });
-
-        if (!isEnrolled) {
-            return res.status(403).json({ error: 'You must be enrolled in this course to be assigned a batch' });
-        }
-
-        // Find the batch (supports main batch or nested sub-batch)
-        let batch = await Batch.findById(batch_id).lean();
-        let targetBatchId = batch_id;
-        let session = 'all';
-
-        if (!batch) {
-            batch = await Batch.findOne({ "batches._id": batch_id }).lean();
-            if (batch) {
-                targetBatchId = batch._id.toString();
-                const subBatch = batch.batches?.find(sb => sb._id.toString() === batch_id);
-                if (subBatch) session = subBatch.batch_type || 'all';
-            }
-        }
-
-        if (!batch) {
-            return res.status(404).json({ error: 'Selected batch was not found' });
-        }
-
-        if (session === 'all' && batch.batch_type) {
-            session = batch.batch_type;
-        }
-
-        const batchObjId = mongoose.Types.ObjectId.isValid(targetBatchId) ? new mongoose.Types.ObjectId(targetBatchId) : targetBatchId;
-
-        // Automatically assign the student
-        const assignment = await StudentBatch.findOneAndUpdate(
-            {
-                student_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
-                course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
-            },
-            {
-                student_id: studentIdObj || studentIdStr,
-                course_id: courseIdObj || courseIdStr,
-                batch_id: batchObjId,
-                assigned_session: session,
-                assigned_time_slot: batch.start_time && batch.end_time ? `${batch.start_time} - ${batch.end_time}` : undefined,
-                assigned_by: studentIdObj || studentIdStr,
-                assigned_at: new Date(),
-                updated_at: new Date()
-            },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
-        ).populate('batch_id');
-
-        // Also update requested_batch_type in Enrollment
-        if (session && session !== 'all') {
-            await Enrollment.updateOne(
-                {
-                    user_id: { $in: [studentIdStr, studentIdObj].filter(Boolean) },
-                    course_id: { $in: [courseIdStr, courseIdObj].filter(Boolean) }
-                },
-                { $set: { requested_batch_type: session } }
-            );
-        }
-
-        res.json({
-            success: true,
-            message: `Successfully assigned to ${batch.batch_name}!`,
-            assignment: {
-                ...assignment.toObject(),
-                id: assignment._id.toString()
-            }
-        });
-    } catch (err) {
-        handleError(res, err, 'student-self-assign');
-    }
-});
-
 // Get student's batch assignment for a specific course
 app.get('/api/student/my-batch/:courseId', authenticateToken, async (req, res) => {
     try {
@@ -9390,12 +8372,13 @@ app.get('/api/student/my-batch/:courseId', authenticateToken, async (req, res) =
 app.get('/api/public/courses', async (req, res) => {
     try {
         const query = {
+            status: { $in: ['published', 'approved'] },
             is_active: { $ne: false }
         };
         if (req.query.category && req.query.category.toLowerCase() !== 'all') {
             query.category = req.query.category;
         }
-        const courses = await Course.find(query).sort({ created_at: -1 }).limit(100);
+        const courses = await Course.find(query).limit(50);
         res.json(courses);
     } catch (err) {
         handleError(res, err, 'public-courses');
@@ -9513,11 +8496,4 @@ httpServer.listen(port, () => {
     console.log(`[System] Auto-restart triggered at ${new Date().toISOString()}`);
 });
 
-// ── Global Process Safety Handlers (Prevents Server Crashes) ──
-process.on('uncaughtException', (err) => {
-    console.error('[CRITICAL] Uncaught Exception caught to prevent crash:', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('[CRITICAL] Unhandled Promise Rejection caught to prevent crash:', reason);
-});
+// Trigger nodemon restart
