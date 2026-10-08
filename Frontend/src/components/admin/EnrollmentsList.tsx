@@ -86,7 +86,7 @@ export function EnrollmentsList({
 
   const EnrollmentAvatar = ({ enrollment }: { enrollment: CourseEnrollment }) => {
     const avatar = enrollment.user_avatar || (enrollment as any).profile?.avatar_url;
-    const name = enrollment.user_name || (enrollment as any).profile?.full_name || 'U';
+    const name = getEnrollmentFullName(enrollment) || 'U';
 
     if (avatar) {
       return (
@@ -148,23 +148,80 @@ export function EnrollmentsList({
     }
   };
 
-  const getEnrollmentName = (e: CourseEnrollment) => e.user_name || (e as any).student_name || (e as any).profile?.full_name || 'Unknown Student';
-  const getEnrollmentEmail = (e: CourseEnrollment) => e.user_email || (e as any).student_email || (e as any).profile?.email || 'N/A';
+  const getEnrollmentFullName = (e: CourseEnrollment): string => {
+    if (e.user_name) return e.user_name;
+    if ((e as any).student_name) return (e as any).student_name;
+    if ((e as any).profile?.full_name) return (e as any).profile.full_name;
+    if (typeof e.user_id === 'object' && (e.user_id as any)?.full_name) return (e.user_id as any).full_name;
+    if (typeof e.user_id === 'object' && (e.user_id as any)?.email) return (e.user_id as any).email.split('@')[0];
+    if (e.user_email) return e.user_email.split('@')[0];
+    if (typeof e.user_id === 'string' && e.user_id) return e.user_id;
+    return 'Student';
+  };
+
+  const formatShortName = (rawName?: string, maxLen = 9): string => {
+    if (!rawName) return 'Student';
+    const name = String(rawName).trim();
+    if (!name) return 'Student';
+
+    // If email address, strip the domain
+    const cleanName = name.includes('@') ? name.split('@')[0] : name;
+    if (cleanName.length <= maxLen) return cleanName;
+
+    // If multiple words (e.g. John Doe)
+    const parts = cleanName.split(/\s+/).filter(Boolean);
+    if (parts.length > 1) {
+      const first = parts[0];
+      if (first.length <= maxLen) {
+        const withInitial = `${first} ${parts[1][0]}.`;
+        if (withInitial.length <= maxLen) {
+          return withInitial;
+        }
+        return first;
+      }
+      return first.slice(0, maxLen);
+    }
+
+    // Single long word / ID / hash like xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx -> xxxxxxxxx
+    return cleanName.slice(0, maxLen);
+  };
+
+  const getEnrollmentShortName = (e: CourseEnrollment): string => {
+    return formatShortName(getEnrollmentFullName(e));
+  };
+
+  const getUserIdString = (uid: any): string => {
+    if (!uid) return '';
+    if (typeof uid === 'object') return uid._id || uid.id || '';
+    return String(uid);
+  };
+
+  const formatShortId = (id?: string) => {
+    if (!id) return 'N/A';
+    if (id.length <= 10) return id;
+    return `${id.slice(0, 4)}...${id.slice(-4)}`;
+  };
+
+  const getEnrollmentName = (e: CourseEnrollment) => getEnrollmentFullName(e);
+  const getEnrollmentEmail = (e: CourseEnrollment) => e.user_email || (e as any).student_email || (e as any).profile?.email || (typeof e.user_id === 'object' ? (e.user_id as any)?.email : 'N/A');
   const getCourseName = (e: CourseEnrollment) => e.course_name || (e as any).course_title || (e as any).course?.title || 'Unknown Course';
   const getAvatarUrl = (e: CourseEnrollment) => e.user_avatar || (e as any).student_avatar || (e as any).profile?.avatar_url || null;
 
   const courses = [...new Set((enrollments || []).map(e => getCourseName(e)).filter(Boolean))];
 
   const filteredEnrollments = (enrollments || []).filter(e => {
-    const userName = getEnrollmentName(e);
+    const fullName = getEnrollmentFullName(e);
+    const shortName = getEnrollmentShortName(e);
     const userEmail = getEnrollmentEmail(e);
     const courseName = getCourseName(e);
+    const userId = getUserIdString(e.user_id);
     
     const matchesSearch = 
-      userName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      shortName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       userEmail.toLowerCase().includes(searchQuery.toLowerCase()) ||
       courseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (e.user_id || '').toLowerCase().includes(searchQuery.toLowerCase());
+      userId.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCourse = filterCourse === "all" || courseName === filterCourse;
     const matchesStatus = filterStatus === "all" || e.status === filterStatus;
 
@@ -425,8 +482,11 @@ export function EnrollmentsList({
                                 <EnrollmentAvatar enrollment={enrollment} />
                                 <div className="space-y-1 min-w-0">
                                   <div className="flex items-center gap-3">
-                                    <h4 className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors whitespace-nowrap">
-                                      {enrollment.user_name || (enrollment as any).profile?.full_name}
+                                    <h4 
+                                      title={getEnrollmentFullName(enrollment)}
+                                      className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors whitespace-nowrap cursor-default"
+                                    >
+                                      {getEnrollmentShortName(enrollment)}
                                     </h4>
                                     {getStatusBadge(enrollment.status || 'pending')}
                                   </div>
@@ -441,10 +501,13 @@ export function EnrollmentsList({
                                   </div>
                                   <div className="flex items-center gap-2 text-[10px] font-mono text-slate-900 group-hover:text-slate-600 transition-colors">
                                     <Fingerprint className="h-3 w-3" />
-                                    <span className="truncate max-w-[120px]">{enrollment.user_id}</span>
+                                    <span className="truncate max-w-[120px]" title={getUserIdString(enrollment.user_id)}>
+                                      {formatShortId(getUserIdString(enrollment.user_id))}
+                                    </span>
                                     <button
-                                      onClick={() => copyToClipboard(enrollment.user_id || '', enrollment.id)}
+                                      onClick={() => copyToClipboard(getUserIdString(enrollment.user_id), enrollment.id)}
                                       className="p-1 hover:bg-white rounded-md transition-all text-indigo-500"
+                                      title="Copy User ID"
                                     >
                                       {copiedId === enrollment.id ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
                                     </button>
@@ -599,11 +662,14 @@ export function EnrollmentsList({
                         <div className="flex gap-4">
                           <EnrollmentAvatar enrollment={enrollment} />
                           <div className="space-y-1">
-                            <h4 className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors leading-tight">
-                              {enrollment.user_name || (enrollment as any).profile?.full_name}
+                            <h4 
+                              title={getEnrollmentFullName(enrollment)}
+                              className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors leading-tight cursor-default"
+                            >
+                              {getEnrollmentShortName(enrollment)}
                             </h4>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest truncate max-w-[140px]">
-                              {enrollment.user_email || (enrollment as any).profile?.email}
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest truncate max-w-[140px]" title={getEnrollmentEmail(enrollment)}>
+                              {getEnrollmentEmail(enrollment)}
                             </p>
                           </div>
                         </div>
@@ -726,9 +792,17 @@ export function EnrollmentsList({
                           <Users className="h-6 w-6 text-white" />
                         </div>
                         <div className="space-y-0.5">
-                          <p className="text-base font-black text-slate-900 group-hover:text-indigo-600 transition-colors leading-tight">
-                            {selectedEnrollment ? getEnrollmentName(selectedEnrollment) : 'Unknown Student'}
+                          <p 
+                            title={selectedEnrollment ? getEnrollmentFullName(selectedEnrollment) : 'Unknown Student'}
+                            className="text-base font-black text-slate-900 group-hover:text-indigo-600 transition-colors leading-tight"
+                          >
+                            {selectedEnrollment ? getEnrollmentShortName(selectedEnrollment) : 'Unknown Student'}
                           </p>
+                          {selectedEnrollment && getEnrollmentFullName(selectedEnrollment) !== getEnrollmentShortName(selectedEnrollment) && (
+                            <p className="text-[11px] font-medium text-slate-400 truncate max-w-[200px]" title={getEnrollmentFullName(selectedEnrollment)}>
+                              {getEnrollmentFullName(selectedEnrollment)}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-4 group">

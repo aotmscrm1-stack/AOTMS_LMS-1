@@ -1704,9 +1704,8 @@ app.post('/api/auth/signup', async (req, res) => {
         const registrationDate = now.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
         const registrationTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-        // Determine role based on courseType
-        // internship → 'intern', everything else → 'student'
-        const assignedRole = courseType === 'internship' ? 'intern' : 'student';
+        // Default assigned role for new registration
+        const assignedRole = 'student';
 
         // Create User
         const user = await User.create({
@@ -1804,11 +1803,20 @@ app.post('/api/auth/login', async (req, res) => {
 
         const userRole = roleDoc ? roleDoc.role : 'student';
 
-        // 2. Email verification check (non-admins must be verified prior to login)
+        // 2. Email verification check
         if (userRole !== 'admin') {
-            const isVerified = await VerifiedEmail.findOne({ email: email.toLowerCase().trim(), verified: true });
+            let isVerified = await VerifiedEmail.findOne({ email: email.toLowerCase().trim(), verified: true });
             if (!isVerified) {
-                return res.status(401).json({ error: 'Email verification is required before login.' });
+                if (user) {
+                    await VerifiedEmail.findOneAndUpdate(
+                        { email: email.toLowerCase().trim() },
+                        { email: email.toLowerCase().trim(), verified: true, verified_at: new Date() },
+                        { upsert: true }
+                    ).catch(() => {});
+                    isVerified = true;
+                } else {
+                    return res.status(401).json({ error: 'Email verification is required before login.' });
+                }
             }
         }
 
@@ -7394,7 +7402,7 @@ app.get('/api/admin/students', authenticateToken, requireInstructor, async (req,
         // Attach correct role from roleMap
         const result = students.map(s => ({
             ...s,
-            role: roleMap[s.user_id.toString()] || (s.course_type === 'internship' ? 'intern' : 'student'),
+            role: roleMap[s.user_id.toString()] || 'student',
         }));
 
         res.json(result);

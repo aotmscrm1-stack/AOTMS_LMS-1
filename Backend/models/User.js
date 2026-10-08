@@ -29,7 +29,7 @@ const ProfileSchema = new mongoose.Schema({
     mobile_number: { type: String },
     college_name: { type: String }, // User requested
     institute_name: { type: String }, // User requested
-    course_type: { type: String, default: 'full_time' }, // full_time, internship, bridge
+    course_type: { type: String, default: 'full_time' },
     github_url: { type: String },
     linkedin_url: { type: String },
     title: { type: String },

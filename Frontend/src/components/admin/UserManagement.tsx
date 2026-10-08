@@ -176,7 +176,6 @@ export function UserManagement({
   const [selectedPendingUserIds, setSelectedPendingUserIds] = useState<Set<string>>(new Set());
   const [bulkSearchQuery, setBulkSearchQuery] = useState("");
   const [bulkCollegeFilter, setBulkCollegeFilter] = useState("all");
-  const [bulkTargetRole, setBulkTargetRole] = useState("keep");
   const [bulkTargetCourseType, setBulkTargetCourseType] = useState("keep");
   const [bulkTargetCollege, setBulkTargetCollege] = useState("keep");
   const [bulkTargetCourseProgramme, setBulkTargetCourseProgramme] = useState("keep");
@@ -186,7 +185,6 @@ export function UserManagement({
   const [dbBatches, setDbBatches] = useState<{ id: string; batch_name: string; course_id?: string; course_title?: string }[]>([]);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
   const [syncedUserPreviews, setSyncedUserPreviews] = useState<Record<string, {
-    role?: string;
     course_type?: string;
     college_name?: string;
     course_title?: string;
@@ -301,25 +299,10 @@ export function UserManagement({
   // Automatic sync handlers for Bulk Select Options
   const handleBulkCourseTypeChange = (val: string) => {
     setBulkTargetCourseType(val);
-    if (val === "internship" || val === "internship_student") {
-      setBulkTargetRole("intern");
-    } else if (val === "full_time") {
-      setBulkTargetRole("student");
-    }
   };
 
   const handleBulkCourseProgrammeChange = (val: string) => {
     setBulkTargetCourseProgramme(val);
-    if (val !== "keep") {
-      const lower = val.toLowerCase();
-      if (lower.includes("intern") || lower.includes("internship")) {
-        setBulkTargetCourseType("internship");
-        setBulkTargetRole("intern");
-      } else if (lower.includes("full") || lower.includes("student")) {
-        setBulkTargetCourseType("full_time");
-        setBulkTargetRole("student");
-      }
-    }
   };
 
   // Fetch course-specific batches from backend whenever Course Programme changes
@@ -397,7 +380,6 @@ export function UserManagement({
     const newPreviews = { ...syncedUserPreviews };
     selectedPendingUserIds.forEach(id => {
       newPreviews[id] = {
-        role: bulkTargetRole !== "keep" ? bulkTargetRole : undefined,
         course_type: bulkTargetCourseType !== "keep" ? bulkTargetCourseType : undefined,
         college_name: bulkTargetCollege !== "keep" ? bulkTargetCollege : undefined,
         course_title: bulkTargetCourseProgramme !== "keep" ? bulkTargetCourseProgramme : undefined,
@@ -421,9 +403,6 @@ export function UserManagement({
         userIds: ids,
         status: targetStatus
       };
-      if (bulkTargetRole !== "keep") {
-        body.role = bulkTargetRole;
-      }
       if (bulkTargetCourseType !== "keep") {
         body.course_type = bulkTargetCourseType;
       }
@@ -450,7 +429,6 @@ export function UserManagement({
         if (u) {
           u.approval_status = targetStatus;
           (u as any).status = targetStatus;
-          if (bulkTargetRole !== "keep") u.role = bulkTargetRole as any;
           if (bulkTargetCourseType !== "keep") u.course_type = bulkTargetCourseType;
           if (bulkTargetCollege !== "keep") u.college_name = bulkTargetCollege;
         }
@@ -939,9 +917,14 @@ export function UserManagement({
                     {/* Name + Email + Role stacked */}
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-base font-black text-slate-900 leading-tight truncate">
-                          {user.full_name || "Platform User"}
-                        </p>
+                        <div 
+                          className="max-w-[180px] sm:max-w-[280px] overflow-x-auto scrollbar-none whitespace-nowrap cursor-default"
+                          title={user.full_name || "Platform User"}
+                        >
+                          <p className="text-base font-black text-slate-900 leading-tight inline-block">
+                            {user.full_name || "Platform User"}
+                          </p>
+                        </div>
                         <Badge
                           variant="outline"
                           className={`shrink-0 text-[10px] h-6 px-2.5 rounded-lg uppercase font-black tracking-tight border shadow-sm ${
@@ -1102,8 +1085,8 @@ export function UserManagement({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
-            { label: "Students",    count: roleCounts.student    || 0, icon: Users,        desc: "Full-time registered students",     accent: "bg-blue-50",   iconColor: "text-blue-600" },
-            { label: "Interns",     count: roleCounts.intern     || 0, icon: Briefcase,    desc: "Internship programme students",     accent: "bg-amber-50",  iconColor: "text-amber-600" },
+            { label: "Students",    count: roleCounts.student    || 0, icon: Users,        desc: "Registered students",               accent: "bg-blue-50",   iconColor: "text-blue-600" },
+            { label: "Interns",     count: roleCounts.intern     || 0, icon: Briefcase,    desc: "Active interns",                    accent: "bg-amber-50",  iconColor: "text-amber-600" },
             { label: "Instructors", count: roleCounts.instructor || 0, icon: Presentation, desc: "Course & content management",       accent: "bg-emerald-50",iconColor: "text-emerald-600" },
             { label: "Managers",    count: roleCounts.manager    || 0, icon: UserCog,      desc: "Operational management team",       accent: "bg-purple-50", iconColor: "text-purple-600" },
           ].map((role) => (
@@ -1167,13 +1150,13 @@ export function UserManagement({
                     value="student"
                     className="rounded-lg h-10 font-medium hover:bg-slate-50"
                   >
-                    Student (Full-Time)
+                    Student
                   </SelectItem>
                   <SelectItem
                     value="intern"
                     className="rounded-lg h-10 font-medium hover:bg-slate-50"
                   >
-                    Intern (Internship)
+                    Intern
                   </SelectItem>
                   <SelectItem
                     value="instructor"
@@ -1380,29 +1363,14 @@ export function UserManagement({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Mobile Number</label>
-                <Input
-                  value={editMobileNumber}
-                  onChange={(e) => setEditMobileNumber(e.target.value)}
-                  placeholder="+91 9876543210"
-                  className="h-11 rounded-xl font-medium text-slate-800"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Course Programme</label>
-                <Select value={editCourseType} onValueChange={setEditCourseType}>
-                  <SelectTrigger className="h-11 rounded-xl font-bold text-slate-800 border-slate-200">
-                    <SelectValue placeholder="Course Type" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl border-slate-200 shadow-xl">
-                    <SelectItem value="full_time" className="font-bold text-xs">Full-Time Student</SelectItem>
-                    <SelectItem value="internship" className="font-bold text-xs">Internship Student</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Mobile Number</label>
+              <Input
+                value={editMobileNumber}
+                onChange={(e) => setEditMobileNumber(e.target.value)}
+                placeholder="+91 9876543210"
+                className="h-11 rounded-xl font-medium text-slate-800"
+              />
             </div>
           </div>
 
@@ -2167,7 +2135,7 @@ export function UserManagement({
 
       {/* ── Bulk Approval Modal (Pending Review Users) ── */}
       <Dialog open={showBulkApprovalDialog} onOpenChange={setShowBulkApprovalDialog}>
-        <DialogContent className="w-[98vw] sm:max-w-[98vw] max-w-[98vw] h-[95vh] max-h-[95vh] p-0 border-0 rounded-[2rem] shadow-2xl bg-white overflow-hidden flex flex-col">
+        <DialogContent className="w-[94vw] sm:max-w-4xl lg:max-w-5xl h-[88vh] max-h-[88vh] p-0 border-0 rounded-[2rem] shadow-2xl bg-white overflow-hidden flex flex-col">
           {/* Header */}
           <div className=" from-slate-900 via-slate-800 to-slate-900 px-6 py-5 text-white shrink-0">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2195,7 +2163,7 @@ export function UserManagement({
             </div>
           </div>
 
-          {/* Controls Bar: Search + Select All + College Filter + Target Role & Course Type */}
+          {/* Controls Bar: Search + Select All + College Filter + Target Options */}
           <div className="p-4 border-b border-slate-100 bg-slate-50/70 space-y-3 shrink-0">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               {/* Search Box */}
@@ -2243,62 +2211,8 @@ export function UserManagement({
               </Button>
             </div>
 
-            {/* Display Count Banner */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-indigo-50/80 border border-indigo-100/90 text-xs font-bold text-indigo-950">
-              <span className="flex items-center gap-1.5">
-                <Users className="h-4 w-4 text-indigo-600 shrink-0" />
-                Showing <strong>{filteredPendingUsers.length}</strong> of <strong>{pendingUsers.length}</strong> Pending Users
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="bg-indigo-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                  {selectedPendingUserIds.size} Selected
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleSyncOptionsToSelected}
-                  disabled={selectedPendingUserIds.size === 0}
-                  className="h-8 px-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 active:scale-95 transition-all"
-                  title="Sync selected Course Type, Role, College, Course Programme & Batch to selected users"
-                >
-                  <RefreshCw className="h-3.5 w-3.5 text-indigo-200" />
-                  <span>Sync Options Data</span>
-                </Button>
-              </div>
-            </div>
-
-            {/* Bulk Update Options (Course Type, Role, College, Course Programme, Batch overrides) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-slate-200/60 text-xs">
-              {/* Target Course Type */}
-              <div className="flex flex-col gap-1">
-                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Course Type:</span>
-                <Select value={bulkTargetCourseType} onValueChange={handleBulkCourseTypeChange}>
-                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    <SelectItem value="keep" className="text-xs font-bold py-1.5">Keep Registered</SelectItem>
-                    <SelectItem value="full_time" className="text-xs font-bold py-1.5 text-blue-600">Full Time Student</SelectItem>
-                    <SelectItem value="internship" className="text-xs font-bold py-1.5 text-amber-600">Internship Student</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Target Role */}
-              <div className="flex flex-col gap-1">
-                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Assign Role:</span>
-                <Select value={bulkTargetRole} onValueChange={setBulkTargetRole}>
-                  <SelectTrigger className="h-9 w-full rounded-xl bg-white border-slate-200 text-xs font-bold">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    <SelectItem value="keep" className="text-xs font-bold py-1.5">Keep Registered</SelectItem>
-                    <SelectItem value="student" className="text-xs font-bold py-1.5 text-blue-600">Student</SelectItem>
-                    <SelectItem value="intern" className="text-xs font-bold py-1.5 text-amber-600">Intern</SelectItem>
-                    <SelectItem value="instructor" className="text-xs font-bold py-1.5 text-emerald-600">Instructor</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* Bulk Update Options (Course Programme, Batch, College overrides) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-slate-200/60 text-xs">
 
               {/* Target Course Programme */}
               <div className="flex flex-col gap-1">
@@ -2407,17 +2321,17 @@ export function UserManagement({
 
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-extrabold text-sm text-slate-900 truncate">
-                            {user.full_name || "Platform User"}
-                          </span>
-                          <Badge variant="outline" className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border-amber-200">
+                          <div 
+                            className="max-w-[180px] sm:max-w-[320px] overflow-x-auto scrollbar-none whitespace-nowrap cursor-default"
+                            title={user.full_name || "Platform User"}
+                          >
+                            <span className="font-extrabold text-sm text-slate-900 inline-block">
+                              {user.full_name || "Platform User"}
+                            </span>
+                          </div>
+                          <Badge variant="outline" className="shrink-0 text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border-amber-200">
                             Pending Review
                           </Badge>
-                          {user.course_type && (
-                            <Badge variant="outline" className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border-blue-200">
-                              {syncedUserPreviews[user.id]?.course_type || user.course_type}
-                            </Badge>
-                          )}
                           {syncedUserPreviews[user.id] && (
                             <Badge className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500 text-white shadow-xs animate-pulse">
                               ✨ Synced Preview
@@ -2428,11 +2342,6 @@ export function UserManagement({
                         {/* Synced Overrides Preview Tags */}
                         {syncedUserPreviews[user.id] && (
                           <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] font-bold">
-                            {syncedUserPreviews[user.id].role && (
-                              <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">
-                                Role: {syncedUserPreviews[user.id].role}
-                              </span>
-                            )}
                             {syncedUserPreviews[user.id].course_title && (
                               <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md truncate max-w-[180px]">
                                 Course: {syncedUserPreviews[user.id].course_title}
@@ -2529,11 +2438,10 @@ export function UserManagement({
                 </span>
               </div>
 
-              {(bulkTargetRole !== "keep" || bulkTargetCourseType !== "keep" || bulkTargetCollege !== "keep" || bulkTargetCourseProgramme !== "keep" || bulkTargetBatch !== "keep") && (
+              {(bulkTargetCourseType !== "keep" || bulkTargetCollege !== "keep" || bulkTargetCourseProgramme !== "keep" || bulkTargetBatch !== "keep") && (
                 <div className="hidden lg:flex items-center gap-1.5 text-[10px] text-indigo-800 font-bold bg-indigo-50 border border-indigo-200 px-2.5 py-1.5 rounded-xl">
                   <span>⚡ Applying:</span>
                   {bulkTargetCourseType !== "keep" && <Badge variant="outline" className="text-[9px] bg-amber-50 text-amber-700 border-amber-200 px-1 py-0">{bulkTargetCourseType}</Badge>}
-                  {bulkTargetRole !== "keep" && <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200 px-1 py-0">{bulkTargetRole}</Badge>}
                   {bulkTargetCourseProgramme !== "keep" && <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 px-1 py-0 truncate max-w-[100px]">{bulkTargetCourseProgramme}</Badge>}
                   {bulkTargetBatch !== "keep" && <Badge variant="outline" className="text-[9px] bg-purple-50 text-purple-700 border-purple-200 px-1 py-0 truncate max-w-[90px]">{bulkTargetBatch}</Badge>}
                 </div>

@@ -29,7 +29,7 @@ interface AuthContextType {
   session: Session | null;
   userRole: UserRole | null;
   loading: boolean;
-  signUp: (email: string, password: string, fullName: string, phone?: string, courseType?: string, collegeName?: string, locationData?: { city?: string; district?: string; country?: string; fullAddress?: string; latitude?: number; longitude?: number }) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string, phone?: string, courseType?: string, collegeName?: string, locationData?: { city?: string; district?: string; country?: string; fullAddress?: string; latitude?: number; longitude?: number }, instituteName?: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null; requiresAdminOtp?: boolean }>;
   verifyAdminOtp: (email: string, otp: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -262,7 +262,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     phone?: string,
     courseType?: string,
     collegeName?: string,
-    locationData?: { city?: string; district?: string; country?: string; fullAddress?: string; latitude?: number; longitude?: number }
+    locationData?: { city?: string; district?: string; country?: string; fullAddress?: string; latitude?: number; longitude?: number },
+    instituteName?: string
   ) => {
     try {
       const res = await fetch(`${API_URL}/auth/signup`, {
@@ -276,6 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           phone, 
           courseType, 
           collegeName,
+          instituteName,
           city: locationData?.city,
           district: locationData?.district,
           country: locationData?.country,

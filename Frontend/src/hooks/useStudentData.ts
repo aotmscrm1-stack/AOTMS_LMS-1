@@ -114,6 +114,7 @@ export interface Question {
     question_type?: string;
     question_text?: string;
     text?: string;
+    description?: string;
     language?: string;
     difficulty?: string;
     input_format?: string;

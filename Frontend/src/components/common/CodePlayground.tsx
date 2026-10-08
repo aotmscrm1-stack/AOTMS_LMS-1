@@ -327,11 +327,10 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
   return (
     <div
       className={cn(
-        "flex flex-col w-full rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl transition-all duration-300",
+        "flex flex-col w-full bg-slate-950 overflow-hidden transition-all duration-300",
         isFullScreen
           ? "fixed inset-0 z-[9999] rounded-none border-none p-2 bg-slate-950"
-          : "h-[620px] xl:h-[680px] min-h-[550px]",
-        className
+          : (className || "rounded-2xl border border-slate-800 shadow-2xl h-[620px] xl:h-[680px] min-h-[550px]")
       )}
     >
       {/* Top Main Toolbar */}

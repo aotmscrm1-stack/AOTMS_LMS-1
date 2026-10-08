@@ -53,20 +53,12 @@ const matchId = (a: any, b: any) => {
   return sa === sb;
 };
 
-// Map course_type value → human label + visual style
-const COURSE_TYPE_META: Record<string, { label: string; icon: any; badgeClass: string; filterLabel: string }> = {
-  full_time:  { label: 'Full-Time',   icon: GraduationCap, badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',   filterLabel: 'Full-Time Students'   },
-  internship: { label: 'Internship',  icon: Briefcase,     badgeClass: 'bg-amber-50 text-amber-700 border-amber-200', filterLabel: 'Internship Students'  },
-};
-
 export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: propEnrollments = [], onSync: _onSync, loading: _loading }: GrantStudentAccessProps & { onSync?: () => void; loading?: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<Profile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [localEnrollments, setLocalEnrollments] = useState<CourseEnrollment[]>([]);
-  // 'all' | 'full_time' | 'internship'
-  const [courseTypeFilter, setCourseTypeFilter] = useState<'all' | 'full_time' | 'internship'>('all');
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -138,9 +130,6 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
     return true;
   });
 
-  // Courses matching the dialog filter (for visual meta)
-  const studentCourseType = (selectedStudent as any)?.course_type || 'full_time';
-  const courseTypeMeta = COURSE_TYPE_META[studentCourseType] ?? COURSE_TYPE_META.full_time;
 
   // Grant access mutation
   const grantAccess = useMutation({
@@ -211,7 +200,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
               Grant Student Access
             </CardTitle>
             <CardDescription className="max-w-md">
-              Assign an <strong>Internship</strong> or <strong>Full-Time</strong> course to students based on the programme they registered for.
+              Assign a course to students based on the programme they registered for.
             </CardDescription>
           </div>
 
@@ -232,7 +221,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                 </DialogTitle>
                 <DialogDescription>
                   {selectedStudent
-                    ? <>Assigning a <strong>{courseTypeMeta.label}</strong> course to <strong>{selectedStudent.full_name}</strong>.</>
+                    ? <>Assigning a course to <strong>{selectedStudent.full_name}</strong>.</>
                     : 'Select a student then choose the matching course to grant access.'}
                 </DialogDescription>
               </DialogHeader>
@@ -259,8 +248,6 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                         </div>
                       ) : (
                         filteredStudents.map(student => {
-                          const sType = (student as any).course_type || 'full_time';
-                          const sMeta = COURSE_TYPE_META[sType] ?? COURSE_TYPE_META.full_time;
                           return (
                             <div
                               key={student.id}
@@ -274,12 +261,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                                 </AvatarFallback>
                               </Avatar>
                               <div className="overflow-hidden flex-1">
-                                <div className="flex items-center gap-2">
-                                  <p className="text-sm font-semibold truncate">{student.full_name}</p>
-                                  <Badge variant="outline" className={`text-[8px] h-4 px-1.5 rounded-md uppercase font-black tracking-tighter ${sMeta.badgeClass}`}>
-                                    {sMeta.label}
-                                  </Badge>
-                                </div>
+                                <p className="text-sm font-semibold truncate">{student.full_name}</p>
                                 <p className="text-xs text-slate-500 truncate">{student.email}</p>
                               </div>
                             </div>
@@ -322,9 +304,6 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                           <Mail className="h-3 w-3" />{selectedStudent.email}
                         </p>
                         <div className="flex items-center gap-2">
-                          <Badge className={`border text-[9px] h-4 px-2 uppercase font-black tracking-tighter ${courseTypeMeta.badgeClass}`}>
-                            {courseTypeMeta.label}
-                          </Badge>
                           {(selectedStudent as any).college_name && (
                             <span className="text-[10px] text-slate-400 truncate">{(selectedStudent as any).college_name}</span>
                           )}
@@ -355,16 +334,14 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                         <SelectTrigger className="h-12 rounded-xl bg-background border-slate-200">
                           <div className="flex items-center gap-2">
                             <BookOpen className="h-4 w-4 text-muted-foreground" />
-                            <SelectValue placeholder="Select a course (CRT Classes, Full-Time, Internship...)" />
+                            <SelectValue placeholder="Select a course..." />
                           </div>
                         </SelectTrigger>
                         <SelectContent>
                           {availableCourses.map(course => (
                             <SelectItem key={course.id} value={course.id}>
                               <span className="flex items-center gap-2">
-                                {course.course_type === 'internship'
-                                  ? <Briefcase className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                                  : <GraduationCap className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
+                                <BookOpen className="h-3.5 w-3.5 text-blue-500 shrink-0" />
                                 {course.title}
                               </span>
                             </SelectItem>
@@ -391,33 +368,6 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
             </DialogContent>
           </Dialog>
         </div>
-
-        {/* ── Course-Type Filter Tabs ────────────────────────────────────── */}
-        <div className="flex items-center gap-2 mt-4 flex-wrap">
-          {([
-            { key: 'all',        label: 'All Students',        count: profiles.filter(p => { const r = p.role?.toLowerCase() || 'student'; return (r === 'student' || r === 'intern' || r === 'user') && !enrollments.some(e => matchId(e.user_id, p.id) && (e.status === 'active' || (e as any).status === 'enrolled' || !e.status)); }).length },
-            { key: 'full_time',  label: 'Full-Time',           count: countByType('full_time') },
-            { key: 'internship', label: 'Internship',          count: countByType('internship') },
-          ] as const).map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setCourseTypeFilter(tab.key)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
-                courseTypeFilter === tab.key
-                  ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                  : 'bg-white text-slate-500 border-slate-200 hover:border-primary/40 hover:text-primary'
-              }`}
-            >
-              {tab.key === 'full_time' && <GraduationCap className="h-3 w-3" />}
-              {tab.key === 'internship' && <Briefcase className="h-3 w-3" />}
-              {tab.key === 'all' && <Users className="h-3 w-3" />}
-              {tab.label}
-              <span className={`rounded-full px-1.5 text-[10px] font-black ${courseTypeFilter === tab.key ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                {tab.count}
-              </span>
-            </button>
-          ))}
-        </div>
       </CardHeader>
 
       <CardContent>
@@ -435,9 +385,6 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
         {/* ── Student Grid ─────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filteredStudents.map(student => {
-            const sType = (student as any).course_type || 'full_time';
-            const sMeta = COURSE_TYPE_META[sType] ?? COURSE_TYPE_META.full_time;
-            const SIcon = sMeta.icon;
             return (
               <div
                 key={student.id}
@@ -455,15 +402,9 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
                       <p className="text-sm font-black text-slate-900 truncate leading-none">{student.full_name}</p>
                     </div>
                     <p className="text-xs text-slate-500 truncate mb-1.5">{student.email}</p>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <Badge variant="outline" className={`text-[9px] h-4 px-1.5 rounded-md uppercase font-black tracking-tighter flex items-center gap-0.5 ${sMeta.badgeClass}`}>
-                        <SIcon className="h-2.5 w-2.5" />
-                        {sMeta.label}
-                      </Badge>
-                      {(student as any).college_name && (
-                        <span className="text-[9px] text-slate-400 truncate max-w-[120px]">{(student as any).college_name}</span>
-                      )}
-                    </div>
+                    {(student as any).college_name && (
+                      <span className="text-[9px] text-slate-400 truncate max-w-[150px]">{(student as any).college_name}</span>
+                    )}
                   </div>
                 </div>
                 <Button
@@ -493,9 +434,7 @@ export function GrantStudentAccess({ profiles: propProfiles = [], enrollments: p
             <Users className="h-12 w-12 mx-auto mb-4 opacity-30" />
             <h3 className="font-bold text-slate-800 text-lg">No Students Awaiting Access</h3>
             <p className="text-sm max-w-xs mx-auto mt-2">
-              {courseTypeFilter !== 'all'
-                ? `All ${COURSE_TYPE_META[courseTypeFilter]?.filterLabel ?? courseTypeFilter} have been enrolled.`
-                : 'All registered students have already been enrolled. New students will appear here after signup.'}
+              All registered students have already been enrolled. New students will appear here after signup.
             </p>
           </div>
         )}
