@@ -29,10 +29,16 @@ jobs:
           timeout: 60s
           command_timeout: 15m
           script: |
+            export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin
+            [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+            sudo systemctl stop pm2-root 2>/dev/null || true
+            sudo systemctl stop pm2-ubuntu 2>/dev/null || true
+            sudo systemctl stop pm2 2>/dev/null || true
+            pm2 kill 2>/dev/null || npx pm2 kill 2>/dev/null || true
+            docker stop $(docker ps -q --filter "publish=5000") 2>/dev/null || true
+            fuser -k -9 5000/tcp 2>/dev/null || true
             cd /root/AOTMS_LMS || cd ~/AOTMS_LMS || cd /root/AOTMS_LMS-1 || true
             git reset --hard HEAD
             git pull origin main
-            pm2 stop all 2>/dev/null || true
-            fuser -k 5000/tcp 2>/dev/null || true
             docker compose down || true
             docker compose up --build -d
