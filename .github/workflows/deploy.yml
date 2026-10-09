@@ -9,6 +9,10 @@ on:
       - 'docker-compose.yml'
       - '.github/workflows/deploy.yml'
 
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,8 +26,10 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           key: ${{ secrets.VPS_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
+          timeout: 60s
+          command_timeout: 15m
           script: |
-            cd ~/AOTMS_LMS-1 || cd /root/AOTMS_LMS-1 || true
+            cd /root/AOTMS_LMS || cd ~/AOTMS_LMS || cd /root/AOTMS_LMS-1 || true
             git reset --hard HEAD
             git pull origin main
             pm2 stop all 2>/dev/null || true
