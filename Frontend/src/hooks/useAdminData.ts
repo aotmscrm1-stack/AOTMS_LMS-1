@@ -9,10 +9,11 @@ export interface Profile {
   email: string | null;
   avatar_url: string | null;
   mobile_number?: string | null;
-  status: 'active' | 'suspended';
-  approval_status: 'pending' | 'approved' | 'rejected' | 'suspended';
+  status: 'active' | 'suspended' | 'pending' | 'approved' | 'rejected' | string;
+  approval_status: 'pending' | 'approved' | 'rejected' | 'suspended' | string;
   last_active_at: string | null;
   created_at: string;
+  registration_date?: string | null;
   role?: string;
   suspended_until?: string | null;
   user_id?: string;
@@ -25,6 +26,11 @@ export interface Profile {
   college_name?: string | null;
   institute_name?: string | null;
   course_type?: 'full_time' | 'internship' | 'bridge' | string | null;
+  course_title?: string | null;
+  batch_name?: string | null;
+  batch?: string | null;
+  batch_type?: string | null;
+  batch_timing?: string | null;
 }
 
 export interface UserRole {
