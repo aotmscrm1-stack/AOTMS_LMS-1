@@ -1,12 +1,29 @@
 services:
-  # Backend Node.js Express + Socket.io service
+  # Backend Node.js service (Scalable)
   backend:
-    image: aotms_lms-1-backend:latest
     build:
       context: ./Backend
       dockerfile: Dockerfile
     ports:
-      - "5000:5000"
+      - "5000"
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 128M
     env_file:
       - ./Backend/.env
+    restart: always
+
+  # NGINX Load Balancer (Routes traffic across scaled backend replicas)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "5000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
     restart: always
