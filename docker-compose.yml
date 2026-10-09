@@ -4,7 +4,7 @@ services:
     build:
       context: ./Backend
       dockerfile: Dockerfile
-    ports:
+    expose:
       - "5000"
     deploy:
       replicas: 4
