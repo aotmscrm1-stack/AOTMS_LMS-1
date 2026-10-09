@@ -26,5 +26,7 @@ jobs:
             cd ~/AOTMS_LMS-1 || cd /root/AOTMS_LMS-1 || true
             git reset --hard HEAD
             git pull origin main
+            pm2 stop all 2>/dev/null || true
+            fuser -k 5000/tcp 2>/dev/null || true
             docker compose down || true
             docker compose up --build -d
