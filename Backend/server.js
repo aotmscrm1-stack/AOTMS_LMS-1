@@ -916,7 +916,8 @@ const executeNativePython = (sourceCode, stdin = '') => {
         });
 
         if (stdin) {
-            proc.stdin.write(stdin);
+            const formattedStdin = stdin.endsWith('\n') ? stdin : stdin + '\n';
+            proc.stdin.write(formattedStdin);
         }
         proc.stdin.end();
     });

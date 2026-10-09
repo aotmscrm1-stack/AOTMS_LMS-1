@@ -195,20 +195,31 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
     detectSmartLanguage(initialLanguage, questionText)
   );
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [stdin, setStdin] = useState<string>('');
-  const [activeRightTab, setActiveRightTab] = useState<'terminal' | 'stdin'>('terminal');
+  const [terminalInput, setTerminalInput] = useState<string>('');
+  const [sessionStdin, setSessionStdin] = useState<string>('');
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const sessionStdinRef = useRef<string>('');
+  sessionStdinRef.current = sessionStdin;
 
-  // Re-fit terminal when switching to terminal tab
-  useEffect(() => {
-    if (activeRightTab === 'terminal') {
-      const timer = setTimeout(() => fitAddonRef.current?.fit(), 80);
-      return () => clearTimeout(timer);
+  const handleSendInput = (val: string) => {
+    if (!val.trim()) return;
+    const trimmed = val.trim();
+    const nextStdin = sessionStdinRef.current ? `${sessionStdinRef.current}\n${trimmed}` : trimmed;
+    setSessionStdin(nextStdin);
+    sessionStdinRef.current = nextStdin;
+    setTerminalInput('');
+
+    if (xtermRef.current) {
+      xtermRef.current.writeln(`\x1b[1;36m> ${trimmed}\x1b[0m`);
     }
-  }, [activeRightTab]);
+
+    if (onRunCode) {
+      onRunCode(selectedLanguage, value, nextStdin);
+    }
+  };
 
   // Sync selected language when question target language changes
   useEffect(() => {
@@ -258,8 +269,27 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
       fitAddonRef.current = fitAddon;
 
       term.writeln('\x1b[1;36m=== LMS Interactive Code Execution Terminal ===\x1b[0m');
-      term.writeln('\x1b[90mPowered by Monaco Editor + xterm.js + Piston Engine\x1b[0m');
+      term.writeln('\x1b[90mPowered by Monaco Editor + xterm.js Sandbox Engine\x1b[0m');
       term.writeln('');
+
+      let lineBuf = '';
+      term.onData((data) => {
+        if (data === '\r') {
+          term.writeln('');
+          if (lineBuf.trim()) {
+            handleSendInput(lineBuf);
+            lineBuf = '';
+          }
+        } else if (data === '\u007F') {
+          if (lineBuf.length > 0) {
+            lineBuf = lineBuf.slice(0, -1);
+            term.write('\b \b');
+          }
+        } else if (data >= ' ' || data === '\t') {
+          lineBuf += data;
+          term.write(data);
+        }
+      });
 
       const handleResize = () => fitAddonRef.current?.fit();
       window.addEventListener('resize', handleResize);
@@ -276,27 +306,30 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
   useEffect(() => {
     if (xtermRef.current) {
       if (output) {
-        setActiveRightTab('terminal');
         xtermRef.current.clear();
         xtermRef.current.writeln('\x1b[1;32m[Execution Completed]\x1b[0m');
 
-        if (stdin.trim()) {
-          xtermRef.current.writeln('\x1b[90m┌─ Standard Input (stdin):\x1b[0m');
-          stdin.trim().split('\n').forEach((l) => {
-            xtermRef.current?.writeln(`\x1b[90m│\x1b[0m \x1b[36m${l}\x1b[0m`);
-          });
-          xtermRef.current.writeln('\x1b[90m└────────────────────────────────────────\x1b[0m');
-        }
+        const inputValues = sessionStdin ? sessionStdin.split('\n') : [];
+        let inputIdx = 0;
 
         const lines = output.split('\n');
         lines.forEach((line) => {
-          if (
+          const isError =
             line.toLowerCase().includes('error') ||
             line.toLowerCase().includes('exception') ||
-            line.toLowerCase().includes('traceback')
-          ) {
+            line.toLowerCase().includes('traceback');
+          const isWarn = line.toLowerCase().includes('warn');
+          const trimmed = line.trim();
+          const isPrompt =
+            (trimmed.endsWith(':') || trimmed.endsWith('?') || trimmed.endsWith('>')) &&
+            inputIdx < inputValues.length;
+
+          if (isPrompt) {
+            const enteredVal = inputValues[inputIdx++];
+            xtermRef.current?.writeln(`${line} \x1b[1;36m${enteredVal}\x1b[0m`);
+          } else if (isError) {
             xtermRef.current?.writeln(`\x1b[1;31m${line}\x1b[0m`);
-          } else if (line.toLowerCase().includes('warn')) {
+          } else if (isWarn) {
             xtermRef.current?.writeln(`\x1b[1;33m${line}\x1b[0m`);
           } else {
             xtermRef.current?.writeln(line);
@@ -307,7 +340,7 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
         setTimeout(() => fitAddonRef.current?.fit(), 50);
       }
     }
-  }, [output]);
+  }, [output, sessionStdin]);
 
   // Refit terminal on fullscreen toggle
   useEffect(() => {
@@ -322,6 +355,7 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
       xtermRef.current.clear();
       xtermRef.current.writeln('\x1b[90mTerminal cleared. Ready for code execution...\x1b[0m');
     }
+    setSessionStdin('');
   };
 
   const handleResetCode = () => {
@@ -429,25 +463,11 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
             {isFullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
           </Button>
 
-          {/* Custom Stdin Active Indicator Pill */}
-          {stdin.trim() && (
-            <Badge
-              variant="outline"
-              onClick={() => setActiveRightTab('stdin')}
-              className="h-8 cursor-pointer bg-sky-950/70 hover:bg-sky-900/80 text-sky-400 border-sky-700/60 text-[10px] font-mono px-2.5 flex items-center gap-1.5 transition-all shadow-xs"
-              title="Custom Stdin is active. Click to view or edit."
-            >
-              <Keyboard className="h-3 w-3 text-sky-400" />
-              <span>Input: {stdin.trim().split('\n').length} line{stdin.trim().split('\n').length > 1 ? 's' : ''}</span>
-            </Badge>
-          )}
-
           {onRunCode && (
             <Button
               size="sm"
               onClick={() => {
-                setActiveRightTab('terminal');
-                onRunCode(selectedLanguage, value, stdin);
+                onRunCode(selectedLanguage, value, sessionStdin);
               }}
               disabled={isRunning || !value || !value.trim()}
               className="h-8 px-5 text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg hover:shadow-emerald-900/40 transition-all flex items-center gap-2"
@@ -504,107 +524,92 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
           </div>
         </div>
 
-        {/* Right Sandbox Panel: Tabbed between xterm.js Terminal & Custom Input */}
+        {/* Right Sandbox Panel: Pure VS Code Terminal with in-terminal input */}
         <div className="lg:col-span-5 h-full bg-[#090d16] flex flex-col overflow-hidden">
-          {/* Header Tabs Bar */}
+          {/* Terminal Header Bar */}
           <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/90 border-b border-slate-800">
-            <div className="flex items-center gap-1 bg-slate-950/90 p-0.5 rounded-lg border border-slate-800/90">
-              <button
-                type="button"
-                onClick={() => setActiveRightTab('terminal')}
-                className={cn(
-                  "px-2.5 py-1 text-[11px] font-bold rounded-md flex items-center gap-1.5 transition-all font-mono",
-                  activeRightTab === 'terminal'
-                    ? "bg-slate-800 text-emerald-400 shadow-sm border border-slate-700/80"
-                    : "text-slate-400 hover:text-slate-200"
-                )}
-              >
-                <TerminalIcon className="h-3 w-3 text-emerald-400" /> Output
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveRightTab('stdin')}
-                className={cn(
-                  "px-2.5 py-1 text-[11px] font-bold rounded-md flex items-center gap-1.5 transition-all font-mono relative",
-                  activeRightTab === 'stdin'
-                    ? "bg-slate-800 text-sky-400 shadow-sm border border-slate-700/80"
-                    : "text-slate-400 hover:text-slate-200"
-                )}
-              >
-                <Keyboard className="h-3 w-3 text-sky-400" /> Custom Input
-                {stdin.trim() && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 ring-2 ring-sky-950 animate-pulse" />
-                )}
-              </button>
+            <div className="flex items-center gap-2">
+              <TerminalIcon className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="text-xs font-bold text-slate-200 font-mono">
+                Terminal Output
+              </span>
+              {sessionStdin && (
+                <span className="text-[10px] text-cyan-400 font-mono bg-cyan-950/70 border border-cyan-800/60 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  Inputs: {sessionStdin.split('\n').join(', ')}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSessionStdin('');
+                      if (onRunCode) onRunCode(selectedLanguage, value, '');
+                    }}
+                    title="Clear inputs & re-run"
+                    className="text-slate-400 hover:text-red-400 font-bold ml-0.5"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
-              {activeRightTab === 'terminal' ? (
-                <Badge variant="outline" className="text-[9px] bg-slate-800/80 text-emerald-400 border-slate-700 font-mono">
-                  Sandbox Active
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="text-[9px] bg-sky-950/60 text-sky-400 border-sky-800/60 font-mono">
-                  STDIN Stream
-                </Badge>
-              )}
+              <Badge variant="outline" className="text-[9px] bg-slate-800/80 text-emerald-400 border-slate-700 font-mono">
+                Interactive Console
+              </Badge>
             </div>
           </div>
 
-          {/* Terminal Canvas (Kept in DOM so xterm session persists) */}
+          {/* Terminal Canvas */}
           <div 
             ref={terminalRef} 
-            className={cn(
-              "flex-1 w-full p-2 overflow-hidden bg-[#090d16]",
-              activeRightTab !== 'terminal' && "hidden"
-            )} 
+            className="flex-1 w-full p-2 overflow-hidden bg-[#090d16]"
           />
 
-          {/* Custom Input (Stdin) Canvas */}
-          {activeRightTab === 'stdin' && (
-            <div className="flex-1 w-full p-3.5 flex flex-col bg-[#090d16] overflow-y-auto space-y-3 custom-scrollbar">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Badge className="bg-sky-500/10 text-sky-400 border-sky-500/30 text-[10px] font-mono px-2 py-0.5">
-                    STDIN (Standard Input)
-                  </Badge>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    {stdin.trim() ? `${stdin.trim().split('\n').length} line(s)` : 'No custom input'}
-                  </span>
-                </div>
-                {stdin && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setStdin('')}
-                    className="h-6 px-2 text-[10px] text-slate-400 hover:text-red-400 font-mono"
-                  >
-                    Clear Input
-                  </Button>
-                )}
-              </div>
-
-              <div className="relative flex-1 min-h-[160px] rounded-xl border border-slate-800 bg-[#0c121e] focus-within:border-sky-500/60 focus-within:ring-1 focus-within:ring-sky-500/40 transition-all overflow-hidden flex flex-col">
-                <textarea
-                  value={stdin}
-                  onChange={(e) => setStdin(e.target.value)}
-                  placeholder={`Enter standard input values (multi-line supported)...\n\nExample for Python:\n  name = input()\n  age = int(input())\n\nExample values:\n  Alice\n  21`}
-                  className="w-full h-full flex-1 p-3.5 bg-transparent text-sky-200 font-mono text-xs sm:text-sm resize-none focus:outline-none placeholder:text-slate-600 custom-scrollbar leading-relaxed"
-                  rows={8}
-                />
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800/90 text-[11px] text-slate-400 flex items-start gap-2.5">
-                <Sparkles className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
-                <div className="space-y-0.5">
-                  <p className="text-slate-200 font-bold">Standard Input (stdin) is active.</p>
-                  <p className="text-slate-400 text-[10px] leading-relaxed">
-                    Values written here are automatically fed into your code's input methods like <code className="text-sky-300 bg-slate-800 px-1 py-0.5 rounded">input()</code> (Python), <code className="text-sky-300 bg-slate-800 px-1 py-0.5 rounded">cin &gt;&gt;</code> (C++), and <code className="text-sky-300 bg-slate-800 px-1 py-0.5 rounded">Scanner</code> (Java).
-                  </p>
-                </div>
-              </div>
+          {/* Docked Interactive Console Input Bar inside Terminal */}
+          <div className="px-3 py-2 bg-[#0c121e] border-t border-slate-800/90 flex items-center gap-2">
+            <div className="flex items-center gap-1 text-slate-400 font-mono text-xs select-none">
+              <span className="text-emerald-400 font-black">&gt;</span>
+              <span className="text-slate-400 text-[11px] font-semibold">Enter Input:</span>
             </div>
-          )}
+            <input
+              type="text"
+              value={terminalInput}
+              onChange={(e) => setTerminalInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSendInput(terminalInput);
+                }
+              }}
+              placeholder="Type program input value here and press Enter (e.g. 1, 4)..."
+              className="flex-1 bg-slate-900/90 border border-slate-700/80 rounded px-2.5 py-1 text-cyan-300 font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 transition-colors"
+            />
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => handleSendInput(terminalInput)}
+              disabled={!terminalInput.trim() || isRunning}
+              className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold rounded shadow-sm"
+            >
+              Send ↵
+            </Button>
+            {sessionStdin && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSessionStdin('');
+                  if (onRunCode) {
+                    onRunCode(selectedLanguage, value, '');
+                  }
+                }}
+                title="Reset Input & Re-run"
+                className="h-7 px-2 text-[10px] text-slate-400 hover:text-red-400 font-mono"
+              >
+                Reset
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>
