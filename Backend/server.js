@@ -1956,7 +1956,7 @@ app.put('/api/admin/update-user-role', authenticateToken, requireAdmin, async (r
 });
 
 app.put('/api/admin/update-user-status', authenticateToken, requireAdmin, async (req, res) => {
-    const { userId, status } = req.body;
+    const { userId, status, course_title, batch_name, course_type, college_name } = req.body;
     if (!userId || !status) return res.status(400).json({ error: 'Missing userId or status' });
 
     try {
@@ -1966,8 +1966,44 @@ app.put('/api/admin/update-user-status', authenticateToken, requireAdmin, async 
             const suspendedUntil = new Date();
             suspendedUntil.setDate(suspendedUntil.getDate() + parseInt(req.body.suspensionDays));
             updateData.suspended_until = suspendedUntil;
+            updateData.status = 'suspended';
         } else if (status === 'approved') {
             updateData.suspended_until = null;
+            updateData.status = 'active';
+        }
+
+        if (course_type && course_type !== 'keep') updateData.course_type = course_type;
+        if (college_name && college_name !== 'keep') updateData.college_name = college_name;
+
+        let targetCourse = null;
+        let targetBatch = null;
+        const escapeRegex = (s) => s ? s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
+
+        if (course_title && course_title !== 'keep') {
+            targetCourse = await Course.findOne({ title: { $regex: new RegExp(`^${escapeRegex(course_title.trim())}$`, 'i') } });
+            if (targetCourse) updateData.course_title = targetCourse.title;
+        }
+
+        if (batch_name && batch_name !== 'keep') {
+            if (targetCourse) {
+                targetBatch = await Batch.findOne({
+                    course_id: targetCourse._id,
+                    batch_name: { $regex: new RegExp(`^${escapeRegex(batch_name.trim())}$`, 'i') }
+                });
+            }
+            if (!targetBatch) {
+                targetBatch = await Batch.findOne({ batch_name: { $regex: new RegExp(`^${escapeRegex(batch_name.trim())}$`, 'i') } });
+            }
+            if (targetBatch) {
+                updateData.batch_name = targetBatch.batch_name;
+                updateData.batch_type = targetBatch.batch_type;
+                if (targetBatch.start_time && targetBatch.end_time) {
+                    updateData.batch_timing = `${targetBatch.start_time} - ${targetBatch.end_time}`;
+                }
+                if (!targetCourse && targetBatch.course_id) {
+                    targetCourse = await Course.findById(targetBatch.course_id);
+                }
+            }
         }
 
         await Profile.findOneAndUpdate(
@@ -1976,18 +2012,193 @@ app.put('/api/admin/update-user-status', authenticateToken, requireAdmin, async 
             { returnDocument: 'after' }
         );
 
-        // Notify user via socket for real-time suspension/approval
-        if (status === 'suspended') {
-            io.to(userId.toString()).emit('user_suspended', {
-                suspended_until: updateData.suspended_until
-            });
-        } else if (status === 'approved') {
+        if (status === 'approved') {
+            if (!targetCourse) {
+                const prof = await Profile.findOne({ user_id: userId }).lean();
+                if (prof?.course_title) {
+                    targetCourse = await Course.findOne({ title: { $regex: new RegExp(`^${escapeRegex(prof.course_title.trim())}$`, 'i') } });
+                }
+            }
+
+            if (targetCourse) {
+                await Enrollment.findOneAndUpdate(
+                    { user_id: userId, course_id: targetCourse._id },
+                    {
+                        user_id: userId,
+                        course_id: targetCourse._id,
+                        status: 'active',
+                        enrolled_at: new Date(),
+                        progress_percentage: 0,
+                        requested_batch_type: targetBatch ? targetBatch.batch_type : 'morning',
+                        requested_batch_id: targetBatch ? targetBatch._id : undefined
+                    },
+                    { upsert: true, returnDocument: 'after' }
+                );
+
+                if (targetBatch) {
+                    await StudentBatch.findOneAndUpdate(
+                        { student_id: userId, course_id: targetCourse._id },
+                        {
+                            student_id: userId,
+                            course_id: targetCourse._id,
+                            batch_id: targetBatch._id,
+                            assigned_session: targetBatch.batch_type || 'all',
+                            assigned_time_slot: targetBatch.start_time && targetBatch.end_time ? `${targetBatch.start_time} - ${targetBatch.end_time}` : undefined,
+                            assigned_at: new Date(),
+                            assigned_by: req.user.id,
+                            updated_at: new Date()
+                        },
+                        { upsert: true, returnDocument: 'after' }
+                    );
+                }
+            }
             io.to(userId.toString()).emit('user_approved');
+        } else if (status === 'suspended') {
+            io.to(userId.toString()).emit('user_suspended', { suspended_until: updateData.suspended_until });
         }
 
         res.json({ message: `User status updated to ${status}` });
     } catch (err) {
         handleError(res, err, 'update-user-status');
+    }
+});
+
+// Bulk update user status with Course & Batch assignment
+app.put('/api/admin/bulk-update-user-status', authenticateToken, requireAdmin, async (req, res) => {
+    const { userIds, status, course_type, college_name, course_title, batch_name } = req.body;
+    if (!Array.isArray(userIds) || userIds.length === 0 || !status) {
+        return res.status(400).json({ error: 'userIds array and status are required' });
+    }
+
+    try {
+        let targetCourse = null;
+        let targetBatch = null;
+        const escapeRegex = (string) => string ? string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
+
+        // Resolve course if course_title is provided
+        if (course_title && course_title !== 'keep') {
+            targetCourse = await Course.findOne({
+                title: { $regex: new RegExp(`^${escapeRegex(course_title.trim())}$`, 'i') }
+            });
+        }
+
+        // Resolve batch if batch_name is provided
+        if (batch_name && batch_name !== 'keep') {
+            if (targetCourse) {
+                targetBatch = await Batch.findOne({
+                    course_id: targetCourse._id,
+                    batch_name: { $regex: new RegExp(`^${escapeRegex(batch_name.trim())}$`, 'i') }
+                });
+            }
+            if (!targetBatch) {
+                targetBatch = await Batch.findOne({
+                    batch_name: { $regex: new RegExp(`^${escapeRegex(batch_name.trim())}$`, 'i') }
+                });
+            }
+        }
+
+        // If batch was found but course was not specified, derive course from batch
+        if (targetBatch && !targetCourse && targetBatch.course_id) {
+            targetCourse = await Course.findById(targetBatch.course_id);
+        }
+
+        let processedCount = 0;
+        let batchAssignedCount = 0;
+        let enrolledCount = 0;
+
+        for (const userId of userIds) {
+            let updateData = {
+                approval_status: status,
+                updated_at: new Date()
+            };
+
+            if (status === 'suspended') {
+                updateData.status = 'suspended';
+            } else if (status === 'approved') {
+                updateData.status = 'active';
+                updateData.suspended_until = null;
+            }
+
+            if (course_type && course_type !== 'keep') updateData.course_type = course_type;
+            if (college_name && college_name !== 'keep') updateData.college_name = college_name;
+            if (targetCourse) updateData.course_title = targetCourse.title;
+            if (targetBatch) {
+                updateData.batch_name = targetBatch.batch_name;
+                updateData.batch_type = targetBatch.batch_type;
+                if (targetBatch.start_time && targetBatch.end_time) {
+                    updateData.batch_timing = `${targetBatch.start_time} - ${targetBatch.end_time}`;
+                }
+            }
+
+            await Profile.findOneAndUpdate({ user_id: userId }, updateData, { upsert: false });
+
+            // If approving, handle course enrollment and batch assignment
+            if (status === 'approved') {
+                let userCourse = targetCourse;
+                if (!userCourse) {
+                    const prof = await Profile.findOne({ user_id: userId }).lean();
+                    if (prof?.course_title) {
+                        userCourse = await Course.findOne({
+                            title: { $regex: new RegExp(`^${escapeRegex(prof.course_title.trim())}$`, 'i') }
+                        });
+                    }
+                }
+
+                if (userCourse) {
+                    // Upsert Enrollment
+                    await Enrollment.findOneAndUpdate(
+                        { user_id: userId, course_id: userCourse._id },
+                        {
+                            user_id: userId,
+                            course_id: userCourse._id,
+                            status: 'active',
+                            enrolled_at: new Date(),
+                            progress_percentage: 0,
+                            requested_batch_type: targetBatch ? targetBatch.batch_type : 'morning',
+                            requested_batch_id: targetBatch ? targetBatch._id : undefined
+                        },
+                        { upsert: true, returnDocument: 'after' }
+                    );
+                    enrolledCount++;
+
+                    // Upsert StudentBatch assignment
+                    if (targetBatch) {
+                        await StudentBatch.findOneAndUpdate(
+                            { student_id: userId, course_id: userCourse._id },
+                            {
+                                student_id: userId,
+                                course_id: userCourse._id,
+                                batch_id: targetBatch._id,
+                                assigned_session: targetBatch.batch_type || 'all',
+                                assigned_time_slot: targetBatch.start_time && targetBatch.end_time ? `${targetBatch.start_time} - ${targetBatch.end_time}` : undefined,
+                                assigned_at: new Date(),
+                                assigned_by: req.user.id,
+                                updated_at: new Date()
+                            },
+                            { upsert: true, returnDocument: 'after' }
+                        );
+                        batchAssignedCount++;
+                    }
+                }
+
+                // Notify user in real-time
+                io.to(userId.toString()).emit('user_approved');
+            } else if (status === 'suspended') {
+                io.to(userId.toString()).emit('user_suspended');
+            }
+
+            processedCount++;
+        }
+
+        res.json({
+            success: true,
+            message: `Bulk updated ${processedCount} users. Enrolled: ${enrolledCount}, Batches Assigned: ${batchAssignedCount}`,
+            processedCount,
+            enrolledCount,
+            batchAssignedCount
+        });
+    } catch (err) {
+        handleError(res, err, 'bulk-update-user-status');
     }
 });
 
@@ -7487,7 +7698,11 @@ app.get('/api/batches', authenticateToken, async (req, res) => {
             if (req.query.course_id === 'Catalogue' || req.query.course_id === 'all') {
                 return res.json([]); // Return empty for invalid IDs
             }
-            filter.course_id = req.query.course_id;
+            if (mongoose.Types.ObjectId.isValid(req.query.course_id)) {
+                filter.course_id = { $in: [req.query.course_id, new mongoose.Types.ObjectId(req.query.course_id)] };
+            } else {
+                filter.course_id = req.query.course_id;
+            }
         }
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
@@ -7921,7 +8136,17 @@ app.put('/api/batches/students/reassign', authenticateToken, requireInstructor, 
 // Get available batches for a course (student view)
 app.get('/api/batches/course/:courseId', authenticateToken, async (req, res) => {
     try {
-        const filter = { course_id: req.params.courseId, status: { $ne: 'rejected' } };
+        const courseId = req.params.courseId;
+        if (!courseId || courseId === 'undefined' || courseId === 'null') {
+            return res.json([]);
+        }
+
+        let courseQuery = courseId;
+        if (mongoose.Types.ObjectId.isValid(courseId)) {
+            courseQuery = { $in: [courseId, new mongoose.Types.ObjectId(courseId)] };
+        }
+
+        const filter = { course_id: courseQuery, status: { $ne: 'rejected' } };
         const userRole = await getUserRole(req.user.id);
         if (userRole === 'instructor') {
             filter.instructor_id = req.user.id;
@@ -7930,6 +8155,69 @@ app.get('/api/batches/course/:courseId', authenticateToken, async (req, res) => 
         res.json(batches.map(b => ({ ...b, id: b._id.toString() })));
     } catch (err) {
         handleError(res, err, 'get-course-batches');
+    }
+});
+
+// Student self-assign to a batch
+app.post('/api/batches/student-self-assign', authenticateToken, async (req, res) => {
+    try {
+        const { course_id, batch_id } = req.body;
+        if (!course_id || !batch_id) {
+            return res.status(400).json({ error: 'course_id and batch_id are required' });
+        }
+
+        const batch = await Batch.findById(batch_id).lean();
+        if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+        const targetCourseId = batch.course_id || course_id;
+
+        // Ensure enrollment exists and is active
+        await Enrollment.findOneAndUpdate(
+            { user_id: req.user.id, course_id: targetCourseId },
+            {
+                user_id: req.user.id,
+                course_id: targetCourseId,
+                status: 'active',
+                requested_batch_type: batch.batch_type || 'morning',
+                requested_batch_id: batch._id,
+                enrolled_at: new Date()
+            },
+            { upsert: true, returnDocument: 'after' }
+        );
+
+        // Assign student to the batch
+        const assignment = await StudentBatch.findOneAndUpdate(
+            { student_id: req.user.id, course_id: targetCourseId },
+            {
+                student_id: req.user.id,
+                course_id: targetCourseId,
+                batch_id: batch._id,
+                assigned_session: batch.batch_type || 'all',
+                assigned_time_slot: batch.start_time && batch.end_time ? `${batch.start_time} - ${batch.end_time}` : undefined,
+                assigned_at: new Date(),
+                assigned_by: req.user.id,
+                updated_at: new Date()
+            },
+            { upsert: true, returnDocument: 'after' }
+        );
+
+        // Update Profile
+        await Profile.findOneAndUpdate(
+            { user_id: req.user.id },
+            {
+                batch_name: batch.batch_name,
+                batch_type: batch.batch_type,
+                batch_timing: batch.start_time && batch.end_time ? `${batch.start_time} - ${batch.end_time}` : undefined
+            }
+        );
+
+        res.json({
+            success: true,
+            message: `Batch "${batch.batch_name}" successfully assigned!`,
+            assignment
+        });
+    } catch (err) {
+        handleError(res, err, 'student-self-assign');
     }
 });
 

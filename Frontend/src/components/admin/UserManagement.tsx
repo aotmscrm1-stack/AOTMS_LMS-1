@@ -431,6 +431,11 @@ export function UserManagement({
           (u as any).status = targetStatus;
           if (bulkTargetCourseType !== "keep") u.course_type = bulkTargetCourseType;
           if (bulkTargetCollege !== "keep") u.college_name = bulkTargetCollege;
+          if (bulkTargetCourseProgramme !== "keep") u.course_title = bulkTargetCourseProgramme;
+          if (bulkTargetBatch !== "keep") {
+            u.batch_name = bulkTargetBatch;
+            (u as any).batch = bulkTargetBatch;
+          }
         }
       });
 

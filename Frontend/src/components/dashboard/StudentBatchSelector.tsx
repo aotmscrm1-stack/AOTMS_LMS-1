@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   useEnrolledCourses,
+  useAvailableCourses,
   StudentCourse,
   useStudentBatch,
   useAvailableBatches,
@@ -41,13 +42,37 @@ import { toast } from "sonner";
 
 export function StudentBatchSelector() {
   const queryClient = useQueryClient();
-  const { data: courses, isLoading: isLoadingCourses } = useEnrolledCourses();
-  const allCourses: StudentCourse[] = courses || [];
+  const { data: enrolledCourses, isLoading: isLoadingEnrolled } = useEnrolledCourses();
+  const { data: availableCoursesList, isLoading: isLoadingAvailable } = useAvailableCourses();
+  const isLoadingCourses = isLoadingEnrolled && isLoadingAvailable;
+
+  const allCourses = useMemo(() => {
+    const list: StudentCourse[] = [];
+    const seen = new Set<string>();
+
+    (enrolledCourses || []).forEach((c) => {
+      const cId = c.id || (c as any)._id;
+      if (cId && !seen.has(cId)) {
+        list.push({ ...c, id: cId });
+        seen.add(cId);
+      }
+    });
+
+    (availableCoursesList || []).forEach((c) => {
+      const cId = c.id || (c as any)._id;
+      if (cId && !seen.has(cId)) {
+        list.push({ ...c, id: cId });
+        seen.add(cId);
+      }
+    });
+
+    return list;
+  }, [enrolledCourses, availableCoursesList]);
 
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Auto-select the first enrolled course if available
+  // Auto-select the first course if available
   useEffect(() => {
     if (!selectedCourseId && allCourses.length > 0) {
       setSelectedCourseId(allCourses[0].id);
@@ -186,7 +211,7 @@ export function StudentBatchSelector() {
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
         {/* ── 1. SELECT COURSE DROPDOWN ── */}
         <Select
-          value={selectedCourseId}
+          value={selectedCourseId || undefined}
           onValueChange={(val) => {
             setSelectedCourseId(val);
             setSelectedBatchId("");
@@ -208,7 +233,7 @@ export function StudentBatchSelector() {
           <SelectContent className="rounded-xl border-slate-100 shadow-xl max-h-60 min-w-[200px]">
             {allCourses.length === 0 ? (
               <div className="px-3 py-4 text-[11px] text-slate-400 text-center">
-                No enrolled courses found
+                No courses found
               </div>
             ) : (
               allCourses.map((course: StudentCourse) => (
@@ -228,7 +253,7 @@ export function StudentBatchSelector() {
         {selectedCourseId && (
           <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto">
             <Select
-              value={selectedBatchId || (assignedBatch?.id || "")}
+              value={selectedBatchId || assignedBatch?.id || undefined}
               onValueChange={(val) => {
                 setSelectedBatchId(val);
                 const chosen = allBatches.find((b) => b.id === val);
