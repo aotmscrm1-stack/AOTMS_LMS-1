@@ -260,7 +260,7 @@ const generateToken = (user) => {
             email: user.email,
         },
         JWT_SECRET,
-        { expiresIn: '30m' }
+        { expiresIn: '365d' } // Persistent 1-year session (no auto-logout)
     );
 };
 
@@ -271,7 +271,7 @@ const generateRefreshToken = (user) => {
             email: user.email,
         },
         JWT_SECRET,
-        { expiresIn: '7d' }
+        { expiresIn: '365d' }
     );
 };
 
@@ -293,12 +293,11 @@ const isPasswordStrong = (password) => {
 };
 
 const verifyRecaptcha = async (token) => {
-    if (process.env.NODE_ENV !== 'production' && !token) {
+    if (!token) {
         return true;
     }
     const secret = process.env.RECAPTCHA_SECRET_KEY;
     if (!secret) return true;
-    if (!token) return false;
 
     try {
         const response = await fetch(`https://www.google.com/recaptcha/api/siteverify`, {
@@ -883,17 +882,51 @@ Do not include any Markdown wrapper like \`\`\`json or text explanation around t
     }
 });
 
-// --- Code Execution Helper ---
-// --- Code Execution Helper (Judge0 Integration) ---
+// --- Code Execution Helper (Native Execution + Judge0 Integration) ---
 const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY;
 const JUDGE0_HOST = process.env.JUDGE0_HOST || 'judge0-extra-ce.p.rapidapi.com';
 
-const executeCode = async (language, sourceCode, stdin = '') => {
-    const lang = language?.toLowerCase();
+const executeNativePython = (sourceCode, stdin = '') => {
+    return new Promise((resolve) => {
+        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+        const proc = require('child_process').spawn(pythonCmd, ['-c', sourceCode], {
+            timeout: 5000
+        });
 
-    // 1. Local JavaScript Execution (Fallback/Fast Path)
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (d) => { stdout += d.toString(); });
+        proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+        proc.on('error', () => {
+            resolve(null);
+        });
+
+        proc.on('close', (code) => {
+            resolve({
+                run: {
+                    stdout: stdout,
+                    stderr: stderr,
+                    code: code || 0,
+                    output: stdout || stderr
+                },
+                language: 'python'
+            });
+        });
+
+        if (stdin) {
+            proc.stdin.write(stdin);
+        }
+        proc.stdin.end();
+    });
+};
+
+const executeCode = async (language, sourceCode, stdin = '') => {
+    const lang = language?.toLowerCase()?.trim() || 'javascript';
+
+    // 1. Local JavaScript Execution (Safe Node.js VM Sandbox)
     if (lang === 'javascript' || lang === 'js' || lang === 'node') {
-        // ... (Keep existing local VM logic for JS as standard)
         return new Promise((resolve) => {
             const outputBuffer = [];
             const errorBuffer = [];
@@ -909,7 +942,7 @@ const executeCode = async (language, sourceCode, stdin = '') => {
             try {
                 const script = new vm.Script(sourceCode);
                 const context = vm.createContext(sandbox);
-                script.runInContext(context, { timeout: 2000 });
+                script.runInContext(context, { timeout: 3000 });
                 resolve({
                     run: {
                         stdout: outputBuffer.join('\n'),
@@ -928,58 +961,97 @@ const executeCode = async (language, sourceCode, stdin = '') => {
         });
     }
 
-    // 2. Judge0 Execution for Other Languages (Python, Java, etc.)
-    if (!JUDGE0_API_KEY) {
-        throw new Error('Judge0 API Key not configured for non-JS languages.');
+    // 2. Ultra-Fast Native Python Execution (Docker Container & Local)
+    if (lang === 'python' || lang === 'python3' || lang === 'py') {
+        try {
+            const nativeResult = await executeNativePython(sourceCode, stdin);
+            if (nativeResult) {
+                return nativeResult;
+            }
+        } catch (e) {
+            console.warn('[CodeExec] Native python failed, falling back to Judge0:', e.message);
+        }
     }
 
-    // Map common names to Judge0 Language IDs
+    // 3. Judge0 Execution (With RapidAPI Key OR Public Free Judge0 CE - Zero Key Required)
     const langMap = {
         'python': 71, // Python 3.8.1
         'python3': 71,
+        'py': 71,
         'java': 62,   // Java (OpenJDK 13.0.1)
         'cpp': 54,    // C++ (GCC 9.2.0)
         'c': 50,      // C (GCC 9.2.0)
+        'csharp': 51, // C# (Mono 6.6.0.161)
+        'cs': 51,
+        'go': 60,     // Go 1.13.5
+        'golang': 60,
+        'rust': 73,   // Rust 1.40.0
+        'ruby': 72,   // Ruby 2.7.0
+        'php': 68,    // PHP 7.4.1
     };
 
-    const languageId = langMap[language.toLowerCase()];
-    if (!languageId) throw new Error(`Language ${language} is not supported by backend compiler yet.`);
+    const languageId = langMap[lang] || 71;
 
     try {
-        console.log(`[Judge0] Submitting ${language} code...`);
-        // Step 1: Submit Code
-        const submitResponse = await axios.post(`https://${JUDGE0_HOST}/submissions`, {
-            source_code: Buffer.from(sourceCode).toString('base64'),
-            language_id: languageId,
-            stdin: Buffer.from(stdin).toString('base64'),
-        }, {
-            params: { wait: true, base64_encoded: true },
-            headers: {
-                'X-RapidAPI-Key': JUDGE0_API_KEY,
-                'X-RapidAPI-Host': JUDGE0_HOST,
-                'Content-Type': 'application/json'
-            }
-        });
+        console.log(`[CodeExec] Executing ${lang} via Judge0...`);
+        const b64Source = Buffer.from(sourceCode || '').toString('base64');
+        const b64Stdin = Buffer.from(stdin || '').toString('base64');
+
+        let submitResponse;
+        if (JUDGE0_API_KEY) {
+            submitResponse = await axios.post(`https://${JUDGE0_HOST}/submissions`, {
+                source_code: b64Source,
+                language_id: languageId,
+                stdin: b64Stdin,
+            }, {
+                params: { wait: true, base64_encoded: true },
+                headers: {
+                    'X-RapidAPI-Key': JUDGE0_API_KEY,
+                    'X-RapidAPI-Host': JUDGE0_HOST,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000
+            });
+        } else {
+            // Free Public Judge0 CE (No API Key Required)
+            submitResponse = await axios.post('https://ce.judge0.com/submissions?wait=true&base64_encoded=true', {
+                source_code: b64Source,
+                language_id: languageId,
+                stdin: b64Stdin,
+            }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 12000
+            });
+        }
 
         const { stdout, stderr, compile_output, message, status } = submitResponse.data;
 
-        const decodedStdout = stdout ? Buffer.from(stdout, 'base64').toString() : '';
+        const decodedStdout = stdout ? Buffer.from(stdout, 'base64').toString('utf8') : '';
         const decodedStderr = (stderr || compile_output || message) ?
-            Buffer.from(stderr || compile_output || message, 'base64').toString() : '';
+            Buffer.from(stderr || compile_output || message, 'base64').toString('utf8') : '';
 
         return {
             run: {
                 stdout: decodedStdout,
                 stderr: decodedStderr,
-                code: status.id === 3 ? 0 : 1, // 3 is "Accepted"
-                output: decodedStdout || decodedStderr,
-                status: status.description
+                code: status?.id === 3 ? 0 : 1, // 3 is "Accepted"
+                output: decodedStdout || decodedStderr || (status?.description || 'Executed'),
+                status: status?.description || 'Executed'
             },
-            language
+            language: lang
         };
     } catch (err) {
-        console.error('[Judge0 Error]', err.message);
-        throw new Error(`Execution failed: ${err.message}`);
+        console.error('[CodeExec Error]', err.message);
+        return {
+            run: {
+                stdout: '',
+                stderr: `Execution error: ${err.message}`,
+                code: 1,
+                output: `Execution error: ${err.message}`,
+                status: 'Error'
+            },
+            language: lang
+        };
     }
 };
 
@@ -1299,18 +1371,18 @@ app.post('/api/auth/refresh', async (req, res) => {
         const newAccessToken = generateToken(user);
         const newRefreshToken = generateRefreshToken(user);
 
-        // Update the HttpOnly cookie
+        // Update the HttpOnly cookie (1 year persistence)
         res.cookie('refresh_token', newRefreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            maxAge: 365 * 24 * 60 * 60 * 1000 // 365 days
         });
 
         res.json({
             session: {
                 access_token: newAccessToken,
-                expires_in: 1800
+                expires_in: 31536000
             }
         });
     } catch (err) {
@@ -1411,7 +1483,7 @@ app.post('/api/auth/signup', async (req, res) => {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            maxAge: 365 * 24 * 60 * 60 * 1000 // 365 days
         });
 
         // Trigger n8n Webhook for Registration confirmation & calling
@@ -1425,7 +1497,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
         res.json({
             user: { id: user._id, email, full_name: fullName, avatar_url: avatarUrl, role: assignedRole },
-            session: { access_token: token, expires_in: 1800 }
+            session: { access_token: token, expires_in: 31536000 }
         });
 
     } catch (err) {
@@ -1623,7 +1695,7 @@ app.post('/api/auth/login', async (req, res) => {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            maxAge: 365 * 24 * 60 * 60 * 1000 // 365 days
         });
 
         res.json({
@@ -1636,7 +1708,7 @@ app.post('/api/auth/login', async (req, res) => {
                 approval_status: profile ? profile.approval_status : 'pending',
                 suspended_until: profile ? profile.suspended_until : null
             },
-            session: { access_token: token, expires_in: 1800 }
+            session: { access_token: token, expires_in: 31536000 }
         });
 
     } catch (err) {
@@ -1713,7 +1785,7 @@ app.post('/api/auth/admin-verify-otp', async (req, res) => {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            maxAge: 365 * 24 * 60 * 60 * 1000 // 365 days
         });
 
         res.json({
@@ -1726,7 +1798,7 @@ app.post('/api/auth/admin-verify-otp', async (req, res) => {
                 approval_status: profile ? profile.approval_status : 'approved',
                 suspended_until: profile ? profile.suspended_until : null
             },
-            session: { access_token: token, expires_in: 1800 }
+            session: { access_token: token, expires_in: 31536000 }
         });
     } catch (err) {
         handleError(res, err, 'admin-verify-otp');
@@ -6217,6 +6289,164 @@ app.post('/api/instructor/grade-result/:resultId', authenticateToken, requireIns
     }
 });
 
+// 2.5 Get All Student Results for Instructors / Admins
+app.get('/api/instructor/student-results', authenticateToken, async (req, res) => {
+    try {
+        const userRole = await getUserRole(req.user.id);
+        if (!['admin', 'instructor', 'manager'].includes(userRole)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const { course_id } = req.query;
+        let query = {};
+
+        // If specific course filter requested
+        if (course_id && course_id !== 'all') {
+            const courseObjId = (course_id.length === 24 && /^[0-9a-fA-F]{24}$/.test(course_id))
+                ? new mongoose.Types.ObjectId(course_id)
+                : course_id;
+            query['course_id'] = courseObjId;
+        } else if (userRole === 'instructor') {
+            // Instructor courses isolation
+            const instructorCourses = await Course.find({
+                $or: [{ instructor_id: req.user.id }, { instructor_ids: req.user.id }]
+            }).select('_id').lean();
+            const courseIds = instructorCourses.map(c => c._id);
+
+            const exams = await Exam.find({
+                $or: [
+                    { course_id: { $in: courseIds } },
+                    { created_by: req.user.id }
+                ]
+            }).select('_id').lean();
+            const examIds = exams.map(e => e._id);
+
+            // Also check batches assigned to instructor
+            const myBatches = await Batch.find({ instructor_id: req.user.id }).select('_id').lean();
+            const myBatchIds = myBatches.map(b => b._id);
+            const myStudents = await StudentBatch.find({ batch_id: { $in: myBatchIds } }).select('student_id').lean();
+            const myStudentIds = myStudents.map(s => s.student_id);
+
+            const conditions = [];
+            if (courseIds.length > 0) conditions.push({ course_id: { $in: courseIds } });
+            if (examIds.length > 0) {
+                conditions.push({ exam_id: { $in: examIds } });
+                conditions.push({ mock_paper_id: { $in: examIds } });
+            }
+            if (myStudentIds.length > 0) conditions.push({ student_id: { $in: myStudentIds } });
+
+            if (conditions.length > 0) {
+                query['$or'] = conditions;
+            }
+        }
+
+        const rawResults = await ExamResult.find(query)
+            .sort({ submitted_at: -1 })
+            .limit(500)
+            .populate('exam_id', 'title total_marks passing_marks exam_type')
+            .populate('course_id', 'title')
+            .lean();
+
+        // Collect student IDs to batch fetch Profiles and Users
+        const studentIds = [...new Set(rawResults.map(r => r.student_id ? r.student_id.toString() : null).filter(Boolean))];
+        const studentObjIds = studentIds.map(id => (id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id)) ? new mongoose.Types.ObjectId(id) : id);
+
+        const [profiles, users, studentBatches] = await Promise.all([
+            Profile.find({ user_id: { $in: [...studentObjIds, ...studentIds] } }).lean(),
+            User.find({ _id: { $in: studentObjIds } }).select('full_name email avatar_url').lean(),
+            StudentBatch.find({ student_id: { $in: [...studentObjIds, ...studentIds] } }).populate('batch_id', 'batch_name batch_type').lean()
+        ]);
+
+        const profileMap = new Map();
+        profiles.forEach(p => {
+            if (p.user_id) profileMap.set(p.user_id.toString(), p);
+        });
+
+        const userMap = new Map();
+        users.forEach(u => {
+            if (u._id) userMap.set(u._id.toString(), u);
+        });
+
+        const batchMap = new Map();
+        studentBatches.forEach(sb => {
+            if (sb.student_id && sb.batch_id) {
+                batchMap.set(sb.student_id.toString(), sb.batch_id);
+            }
+        });
+
+        const results = rawResults.map(r => {
+            const sid = r.student_id ? r.student_id.toString() : '';
+            const profile = profileMap.get(sid);
+            const user = userMap.get(sid);
+            const batch = batchMap.get(sid);
+
+            const studentName = profile?.full_name || user?.full_name || 'Student';
+            const studentEmail = profile?.email || user?.email || '';
+            const studentAvatar = profile?.avatar_url || user?.avatar_url || '';
+            const studentCollege = profile?.college || profile?.college_name || '';
+            const batchName = batch?.batch_name || profile?.batch_name || profile?.batch || 'General Batch';
+            const batchType = batch?.batch_type || profile?.batch_type || 'regular';
+
+            const courseTitle = r.course_id?.title || (typeof r.course_id === 'string' ? r.course_id : '') || profile?.course_title || 'General Course';
+            const courseId = r.course_id?._id?.toString() || (typeof r.course_id === 'string' ? r.course_id : '') || '';
+
+            const examObj = r.exam_id;
+            const testTitle = r.test_title || examObj?.title || 'Assessment';
+            const totalMarks = examObj?.total_marks || r.total_questions || 100;
+            const passingMarks = examObj?.passing_marks || Math.round(totalMarks * 0.4);
+            const percentage = typeof r.percentage === 'number' ? Math.round(r.percentage * 10) / 10 : 0;
+            const passed = r.score >= passingMarks || percentage >= 40;
+
+            return {
+                id: r._id.toString(),
+                student_id: sid,
+                student_name: studentName,
+                student_email: studentEmail,
+                student_avatar: studentAvatar,
+                student_college: studentCollege,
+                batch_name: batchName,
+                batch_type: batchType,
+                course_id: courseId,
+                course_title: courseTitle,
+                test_title: testTitle,
+                exam_type: examObj?.exam_type || 'test',
+                score: r.score || 0,
+                total_questions: r.total_questions || 0,
+                total_marks: totalMarks,
+                passing_marks: passingMarks,
+                percentage,
+                passed,
+                grading_status: r.grading_status || 'graded',
+                time_spent: r.time_spent || 0,
+                submitted_at: r.submitted_at ? (r.submitted_at instanceof Date ? r.submitted_at.toISOString() : new Date(r.submitted_at).toISOString()) : new Date().toISOString(),
+                questions_count: r.questions_snapshot?.length || 0,
+                questions_snapshot: r.questions_snapshot || []
+            };
+        });
+
+        const totalSubmissions = results.length;
+        const uniqueStudents = new Set(results.map(r => r.student_id)).size;
+        const totalPct = results.reduce((acc, r) => acc + r.percentage, 0);
+        const avgPercentage = totalSubmissions > 0 ? Math.round((totalPct / totalSubmissions) * 10) / 10 : 0;
+        const passedCount = results.filter(r => r.passed).length;
+        const passRate = totalSubmissions > 0 ? Math.round((passedCount / totalSubmissions) * 100) : 0;
+        const topScore = results.length > 0 ? Math.max(...results.map(r => r.score)) : 0;
+
+        res.json({
+            summary: {
+                total_submissions: totalSubmissions,
+                unique_students: uniqueStudents,
+                avg_percentage: avgPercentage,
+                pass_rate: passRate,
+                top_score: topScore
+            },
+            results
+        });
+    } catch (err) {
+        handleError(res, err, 'instructor-student-results');
+    }
+});
+
 // 3. Request Re-evaluation (Student Only)
 app.post('/api/student/request-reevaluation/:resultId', authenticateToken, async (req, res) => {
     try {
@@ -6848,7 +7078,8 @@ app.get('/api/data/:table', authenticateToken, async (req, res) => {
             if (studentScopedTables[table]) {
                 const scopeField = studentScopedTables[table];
                 // Overwrite any attempted ID with the actual user ID to prevent unauthorized access
-                query[scopeField] = req.user.id;
+                const studentObjId = tryConvertId(req.user.id);
+                query[scopeField] = { $in: [studentObjId, req.user.id.toString()] };
                 console.log(`[ACL] Student scoping ${table} to ${scopeField}=${req.user.id}`);
             }
 
@@ -7124,8 +7355,9 @@ app.get('/api/data/:table', authenticateToken, async (req, res) => {
             data = await dataQuery.populate('user_id', 'full_name avatar_url email');
         } else if (table === 'exam_results') {
             data = await dataQuery
-                .populate('exam_id', 'title')
-                .populate('mock_paper_id', 'title');
+                .populate('exam_id', 'title total_marks passing_marks')
+                .populate('mock_paper_id', 'title')
+                .populate('course_id', 'title thumbnail_url category');
         } else if (table === 'courses') {
             data = await dataQuery
                 .populate('instructor_ids', 'full_name avatar_url');

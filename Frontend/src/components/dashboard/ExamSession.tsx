@@ -213,7 +213,7 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
     setScratchpadCodes(prev => ({ ...prev, [currentQuestion.id]: val }));
   };
 
-  const runCode = async (selectedLang?: string, customCode?: string) => {
+  const runCode = async (selectedLang?: string, customCode?: string, customStdin?: string) => {
     if (!currentQuestion) return;
     const isCoding = (currentQuestion.type || currentQuestion.question_type) === 'coding' || (currentQuestion.type || currentQuestion.question_type) === 'practical';
     const code = customCode !== undefined 
@@ -230,22 +230,23 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
 
     try {
       const res = await fetchWithAuth<{
-        run?: { stdout?: string; stderr?: string };
+        run?: { stdout?: string; stderr?: string; output?: string; status?: string };
         message?: string;
       }>('/run-code', {
         method: 'POST',
         body: JSON.stringify({
           language: language, 
           version: '*',
-          files: [{ content: code }]
+          files: [{ content: code }],
+          stdin: customStdin || ''
         })
       });
 
-      const output = res.run?.stdout || res.run?.stderr || (res.message ? res.message : "No output");
+      const output = res.run?.stdout || res.run?.stderr || res.run?.output || (res.message ? res.message : "No output");
       setConsoleOutput(prev => ({ ...prev, [currentQuestion.id]: output }));
       
-      if (res.run?.stderr) {
-        toast({ title: "Execution Error", description: "Check the console output for details.", variant: "destructive" });
+      if (res.run?.stderr && !res.run?.stdout) {
+        toast({ title: "Execution Error", description: "Check console output for error details.", variant: "destructive" });
       } else {
         toast({ title: "Execution Success", description: "Code ran successfully." });
       }
@@ -651,7 +652,7 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
                 value={answers[currentQuestion?.id as string] || ''}
                 onChange={(val) => handleAnswerChange(val || '')}
                 output={consoleOutput[currentQuestion?.id as string]}
-                onRunCode={(lang, code) => runCode(lang, code)}
+                onRunCode={(lang, code, stdin) => runCode(lang, code, stdin)}
                 isRunning={isRunning}
               />
             </div>

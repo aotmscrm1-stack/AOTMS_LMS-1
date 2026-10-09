@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext, ReactNode, useCallback, useRef } from 'react';
 import { UserRole } from '@/types/auth';
-import { API_URL, refreshAccessToken, parseJsonResponse } from '@/lib/api';
+import { API_URL, refreshAccessToken } from '@/lib/api';
 
 // Simplified types to replace backend user types
 interface User {
@@ -176,7 +176,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         } catch (refreshErr) {
           console.warn('Refresh failed during checkSession:', refreshErr);
-          await signOut();
+          // Never force auto-logout: maintain active user session until explicit user logout
+          setLoading(false);
           return;
         }
       }
@@ -192,7 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const { user: userData } = await parseJsonResponse<any>(profileRes);
+      const { user: userData } = await profileRes.json();
 
       setUser(userData);
       setSession({ access_token: token, user: userData } as Session);
@@ -287,7 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }),
       });
 
-      const data = await parseJsonResponse<any>(res);
+      const data = await res.json();
 
       if (!res.ok) {
         return { error: new Error(data.error || 'Signup failed') };
@@ -324,7 +325,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await parseJsonResponse<any>(res);
+      const data = await res.json();
 
       if (!res.ok) {
         setLoading(false);
@@ -371,7 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ email, otp }),
       });
 
-      const data = await parseJsonResponse<any>(res);
+      const data = await res.json();
 
       if (!res.ok) {
         setLoading(false);
