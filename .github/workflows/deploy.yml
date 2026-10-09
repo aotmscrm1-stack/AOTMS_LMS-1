@@ -26,4 +26,5 @@ jobs:
             cd ~/AOTMS_LMS-1 || cd /root/AOTMS_LMS-1 || true
             git reset --hard HEAD
             git pull origin main
-            docker compose up --build --force-recreate -d
+            docker compose down || true
+            docker compose up --build -d
