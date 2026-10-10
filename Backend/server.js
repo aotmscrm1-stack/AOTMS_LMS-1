@@ -727,11 +727,12 @@ app.post('/api/zoom/webhook', async (req, res) => {
 // --- Question Bank Generator Proxy ---
 app.post('/api/manager/generate-questions', authenticateToken, requireInstructor, async (req, res) => {
     console.log('[API] Generate Questions Request:', req.body.topic, req.body.type);
-    const { topic, type, count, difficulty, prompt } = req.body;
+    const { topic, type, count, difficulty, prompt, language } = req.body;
+    const targetLang = language || 'javascript';
 
     const aiAgentApiKey = (process.env.AI_AGENT_API || '').trim();
 
-    const buildMockQuestion = (qType, qTopic, qDifficulty) => {
+    const buildMockQuestion = (qType, qTopic, qDifficulty, qLang) => {
         const shortType = qType?.toLowerCase();
         if (shortType === 'true_false') {
             return {
@@ -778,14 +779,37 @@ app.post('/api/manager/generate-questions', authenticateToken, requireInstructor
                 marks: 1
             };
         }
-        if (shortType === 'coding') {
+        if (shortType === 'coding' || shortType === 'practical') {
+            const isPy = (qLang || '').toLowerCase().includes('py');
             return {
                 topic: qTopic || "General",
-                question_text: "Write code to log 'Hello World'.",
+                question_text: `Write a program to process input and solve the ${qTopic || 'challenge'} problem.`,
                 type: "coding",
+                language: qLang || "javascript",
                 difficulty: qDifficulty || "medium",
-                correct_answer: "console.log('Hello World');",
-                explanation: "This is a simple explanation.",
+                constraints: "1 <= N <= 10^5\n-1000 <= Elements <= 1000",
+                input_format: "Line 1: An integer N denoting number of elements\nLine 2: N space-separated integers",
+                output_format: "Print the final calculated result on a single line.",
+                sample_input: "5\n1 2 3 4 5",
+                sample_output: "15",
+                test_cases: [
+                    {
+                        input: "5\n1 2 3 4 5",
+                        expected_output: "15",
+                        explanation: "Sample public case summing numbers 1 through 5.",
+                        is_hidden: false
+                    },
+                    {
+                        input: "3\n10 20 30",
+                        expected_output: "60",
+                        explanation: "Hidden test case verifying general input boundaries.",
+                        is_hidden: true
+                    }
+                ],
+                correct_answer: isPy 
+                    ? "import sys\n\ndef solve():\n    lines = sys.stdin.read().split()\n    if not lines: return\n    n = int(lines[0])\n    nums = [int(x) for x in lines[1:n+1]]\n    print(sum(nums))\n\nif __name__ == '__main__':\n    solve()"
+                    : "const fs = require('fs');\nfunction solve() {\n  const input = fs.readFileSync(0, 'utf-8').trim().split(/\\s+/);\n  if (!input || !input[0]) return;\n  const n = parseInt(input[0]);\n  const nums = input.slice(1, n + 1).map(Number);\n  console.log(nums.reduce((a, b) => a + b, 0));\n}\nsolve();",
+                explanation: "Reads input from standard input (stdin), computes the sum of the array, and prints standard output (stdout).",
                 marks: 5
             };
         }
@@ -804,7 +828,7 @@ app.post('/api/manager/generate-questions', authenticateToken, requireInstructor
 
     if (!aiAgentApiKey) {
         console.warn('[AI_AGENT_API] Key is missing in .env. Returning local mock questions.');
-        const mockQ = buildMockQuestion(type, topic, difficulty);
+        const mockQ = buildMockQuestion(type, topic, difficulty, targetLang);
         return res.json({
             testing_msg: "testing HI message Received an Output",
             ai_agent_api: "none",
@@ -816,7 +840,48 @@ app.post('/api/manager/generate-questions', authenticateToken, requireInstructor
         console.log(`[AI_AGENT_API Trigger] Calling OpenAI chat/completions using Project Key...`);
         console.log("testing HI message Received an Output.");
 
-        const systemPrompt = `You are an expert quiz generator. Generate exactly ${count || 1} questions of type '${type || 'mcq'}' on the topic '${topic || 'General'}' with a difficulty level of '${difficulty || 'medium'}'.
+        let systemPrompt = '';
+        if (type === 'coding' || type === 'practical') {
+            systemPrompt = `You are an expert computer science problem creator. Generate exactly ${count || 1} coding / practical problem(s) on the topic '${topic || 'General'}' with difficulty '${difficulty || 'medium'}' in programming language '${targetLang}'.
+Extra instructions: ${prompt || 'None'}.
+
+You MUST reply with a JSON object in this exact schema with ALL fields populated (never leave any field empty):
+{
+  "questions": [
+    {
+      "topic": "${topic || 'General'}",
+      "question_text": "Detailed problem statement describing what the program must solve",
+      "type": "coding",
+      "language": "${targetLang}",
+      "difficulty": "${difficulty || 'medium'}",
+      "constraints": "Strict constraints on inputs, e.g. 1 <= N <= 10^5, -10^9 <= A[i] <= 10^9",
+      "input_format": "Exact specification of input from stdin (e.g. Line 1: Integer N...)",
+      "output_format": "Exact specification of output to stdout",
+      "sample_input": "Realistic sample input for demonstration",
+      "sample_output": "Exact expected output corresponding to sample_input",
+      "test_cases": [
+        {
+          "input": "Sample test case input (matches sample_input)",
+          "expected_output": "Expected output (matches sample_output)",
+          "explanation": "Explanation for sample public test case",
+          "is_hidden": false
+        },
+        {
+          "input": "Hidden test case 1 input (edge case / boundary)",
+          "expected_output": "Expected output for hidden test case 1",
+          "explanation": "Verification of boundary constraints",
+          "is_hidden": true
+        }
+      ],
+      "correct_answer": "Complete, correct, working solution code in ${targetLang} reading from stdin and writing to stdout",
+      "explanation": "Detailed explanation of the algorithm, time complexity O(...) and space complexity O(...)",
+      "marks": 5
+    }
+  ]
+}
+Do not include any Markdown wrapper like \`\`\`json or text explanation around the JSON, just a clean JSON output.`;
+        } else {
+            systemPrompt = `You are an expert quiz generator. Generate exactly ${count || 1} questions of type '${type || 'mcq'}' on the topic '${topic || 'General'}' with a difficulty level of '${difficulty || 'medium'}'.
 Extra instructions: ${prompt || 'None'}.
 
 You MUST reply with a JSON object in this exact schema:
@@ -835,6 +900,7 @@ You MUST reply with a JSON object in this exact schema:
   ]
 }
 Do not include any Markdown wrapper like \`\`\`json or text explanation around the JSON, just a clean JSON output.`;
+        }
 
         const response = await axios.post('https://api.openai.com/v1/chat/completions', {
             model: 'gpt-4o-mini',

@@ -899,6 +899,7 @@ export function QuestionBankManager({
           type: globalType,
           count: globalCount,
           difficulty: globalDifficulty,
+          language: globalLanguage,
           prompt: globalPrompt || `Generate ${globalCount} ${globalType} questions about ${globalTopic}`
         }),
       });
@@ -1377,48 +1378,6 @@ export function QuestionBankManager({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
-                      {/* Explicit Question Type Selector */}
-                      <div className="flex items-center gap-1.5">
-                        <Label className="text-[10px] font-bold text-slate-500 uppercase">Type:</Label>
-                        <Select
-                          value={q.type || 'mcq'}
-                          onValueChange={(val) => handleUpdateQuestion(idx, 'type', val)}
-                        >
-                          <SelectTrigger className="h-8 w-44 rounded-lg bg-white border-slate-200 text-xs font-bold shadow-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {QUESTION_TYPES.map(t => (
-                              <SelectItem key={t.value} value={t.value} className="text-xs font-semibold">
-                                {t.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {/* Choose Language Selector - prominent when coding/practical */}
-                      {(q.type === 'coding' || q.type === 'practical') && (
-                        <div className="flex items-center gap-1.5">
-                          <Label className="text-[10px] font-bold text-emerald-700 uppercase">Language:</Label>
-                          <Select
-                            value={q.language || 'javascript'}
-                            onValueChange={(val) => handleUpdateQuestion(idx, 'language', val)}
-                          >
-                            <SelectTrigger className="h-8 w-40 rounded-lg bg-emerald-50 border-emerald-300 text-xs font-bold text-emerald-800 shadow-xs">
-                              <SelectValue placeholder="Choose Language" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {SUPPORTED_LANGUAGES.map(lang => (
-                                <SelectItem key={lang.value} value={lang.value} className="text-xs font-bold uppercase">
-                                  {lang.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-
                       {/* Difficulty Selector */}
                       <div className="flex items-center gap-1.5">
                         <Label className="text-[10px] font-bold text-slate-500 uppercase">Level:</Label>
@@ -1554,35 +1513,15 @@ export function QuestionBankManager({
                               </Badge>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-slate-700">Choose Programming Language</Label>
-                                <Select 
-                                  value={q.language || 'javascript'} 
-                                  onValueChange={(val) => handleUpdateQuestion(idx, 'language', val)}
-                                >
-                                  <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 font-bold text-xs uppercase">
-                                    <SelectValue placeholder="Choose Language" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {SUPPORTED_LANGUAGES.map(lang => (
-                                      <SelectItem key={lang.value} value={lang.value} className="font-bold text-[10px] uppercase tracking-wider">
-                                        {lang.label}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-slate-700">Constraints</Label>
-                                <Input
-                                  value={q.constraints || ''}
-                                  onChange={(e) => handleUpdateQuestion(idx, 'constraints', e.target.value)}
-                                  placeholder="e.g. 1 <= N <= 10^5, -1000 <= A[i] <= 1000"
-                                  className="h-10 rounded-xl bg-white border-slate-200 font-mono text-xs"
-                                />
-                              </div>
+                            {/* Constraints */}
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-bold text-slate-700">Constraints</Label>
+                              <Input
+                                value={q.constraints || ''}
+                                onChange={(e) => handleUpdateQuestion(idx, 'constraints', e.target.value)}
+                                placeholder="e.g. 1 <= N <= 10^5, -1000 <= A[i] <= 1000"
+                                className="h-10 rounded-xl bg-white border-slate-200 font-mono text-xs"
+                              />
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
