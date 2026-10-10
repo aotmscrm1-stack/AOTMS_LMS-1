@@ -40,5 +40,6 @@ jobs:
             cd /root/AOTMS_LMS || cd ~/AOTMS_LMS || cd /root/AOTMS_LMS-1 || true
             git reset --hard HEAD
             git pull origin main
-            docker compose down || true
-            docker compose up --build -d
+            docker compose down --remove-orphans || true
+            docker rm -f $(docker ps -a -q --filter "name=aotms_lms") 2>/dev/null || true
+            docker compose up --build -d --remove-orphans --force-recreate
