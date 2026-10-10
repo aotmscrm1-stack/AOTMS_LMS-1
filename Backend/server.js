@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const { generateUploadUrl, generateViewUrl, deleteObject, uploadFile } = require('./utils/s3');
 const axios = require('axios');
@@ -1595,6 +1596,84 @@ app.post('/api/auth/reset-password', async (req, res) => {
     }
 });
 
+// Set / Update password for authenticated user (Students, Instructors, Managers, Admins)
+app.post('/api/user/set-password', authenticateToken, async (req, res) => {
+    try {
+        const { new_password, current_password } = req.body;
+        if (!new_password) return res.status(400).json({ error: 'New password is required' });
+
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        // If current_password is provided, verify it (supports raw password OR exact hash)
+        if (current_password) {
+            let isCurrentMatch = false;
+            if (
+                (user.password_hash && current_password === user.password_hash) ||
+                (user.password && current_password === user.password)
+            ) {
+                isCurrentMatch = true;
+            } else if (user.password_hash) {
+                try {
+                    if (user.password_hash.startsWith('$2')) {
+                        isCurrentMatch = await bcrypt.compare(current_password, user.password_hash);
+                    }
+                } catch (e) {}
+            }
+            if (!isCurrentMatch) {
+                return res.status(400).json({ error: 'Current password does not match' });
+            }
+        }
+
+        // Hash new password if not already hashed with bcrypt
+        let finalHash = new_password;
+        if (!new_password.startsWith('$2a$') && !new_password.startsWith('$2b$') && !new_password.startsWith('$2y$')) {
+            const salt = await bcrypt.genSalt(12);
+            finalHash = await bcrypt.hash(new_password, salt);
+        }
+
+        user.password_hash = finalHash;
+        user.password = finalHash;
+        user.failed_login_attempts = 0;
+        await user.save();
+
+        console.log(`[Auth] User ${user.email} successfully updated password`);
+        res.json({ success: true, message: 'Password updated successfully' });
+    } catch (err) {
+        handleError(res, err, 'user-set-password');
+    }
+});
+
+// Admin / System Set Password (e.g. for existing students/instructors/managers)
+app.post('/api/auth/set-password', async (req, res) => {
+    try {
+        const { email, new_password, password } = req.body;
+        const targetPass = new_password || password;
+        if (!email || !targetPass) {
+            return res.status(400).json({ error: 'Email and new password are required' });
+        }
+
+        const user = await User.findOne({ email: { $regex: new RegExp("^" + email.trim() + "$", "i") } });
+        if (!user) return res.status(404).json({ error: 'No account found with this email' });
+
+        let finalHash = targetPass;
+        if (!targetPass.startsWith('$2a$') && !targetPass.startsWith('$2b$') && !targetPass.startsWith('$2y$')) {
+            const salt = await bcrypt.genSalt(12);
+            finalHash = await bcrypt.hash(targetPass, salt);
+        }
+
+        user.password_hash = finalHash;
+        user.password = finalHash;
+        user.failed_login_attempts = 0;
+        await user.save();
+
+        console.log(`[Auth] Set-Password applied for ${user.email}`);
+        res.json({ success: true, message: 'Password set successfully. You can now login.' });
+    } catch (err) {
+        handleError(res, err, 'auth-set-password');
+    }
+});
+
 app.post('/api/auth/refresh', async (req, res) => {
     const refreshToken = getCookie(req, 'refresh_token') || req.body.refresh_token;
     if (!refreshToken) return res.status(401).json({ error: 'Refresh token is missing' });
@@ -1818,7 +1897,53 @@ app.post('/api/auth/login', async (req, res) => {
             }
         }
 
-        const isMatch = password === user.password_hash || (await bcrypt.compare(password, user.password_hash));
+        let isMatch = false;
+
+        // 1. Direct match: allows logging in with plain password if plain stored, OR logging in directly with hash string
+        if (
+            (user.password_hash && password === user.password_hash) ||
+            (user.password && password === user.password)
+        ) {
+            isMatch = true;
+        }
+
+        // 2. Safe bcrypt compare against user.password_hash
+        if (!isMatch && user.password_hash) {
+            try {
+                if (typeof user.password_hash === 'string' && (user.password_hash.startsWith('$2a$') || user.password_hash.startsWith('$2b$') || user.password_hash.startsWith('$2y$'))) {
+                    isMatch = await bcrypt.compare(password, user.password_hash);
+                }
+            } catch (bErr) {
+                console.warn('[Login Auth] bcrypt.compare password_hash failed safely:', bErr.message);
+            }
+        }
+
+        // 3. Safe bcrypt compare against user.password (if present)
+        if (!isMatch && user.password) {
+            try {
+                if (typeof user.password === 'string' && (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$'))) {
+                    isMatch = await bcrypt.compare(password, user.password);
+                }
+            } catch (bErr) {
+                console.warn('[Login Auth] bcrypt.compare password failed safely:', bErr.message);
+            }
+        }
+
+        // 4. SHA-256 and MD5 fallback check (for legacy/migrated password hashes)
+        if (!isMatch && password) {
+            try {
+                const sha256Hex = crypto.createHash('sha256').update(password).digest('hex');
+                const md5Hex = crypto.createHash('md5').update(password).digest('hex');
+                if (
+                    (user.password_hash && (user.password_hash === sha256Hex || user.password_hash === md5Hex)) ||
+                    (user.password && (user.password === sha256Hex || user.password === md5Hex))
+                ) {
+                    isMatch = true;
+                }
+            } catch (hErr) {
+                // Ignore hash fallback error
+            }
+        }
 
         if (!isMatch) {
             // Brute force protection: 5 attempts -> 15 min lock

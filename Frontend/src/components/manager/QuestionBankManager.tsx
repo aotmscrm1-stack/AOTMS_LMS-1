@@ -1378,6 +1378,48 @@ export function QuestionBankManager({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
+                      {/* Type Selector */}
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[10px] font-bold text-slate-500 uppercase">Type:</Label>
+                        <Select
+                          value={q.type || 'mcq'}
+                          onValueChange={(val) => handleUpdateQuestion(idx, 'type', val)}
+                        >
+                          <SelectTrigger className="h-8 w-36 rounded-lg bg-white border-slate-200 text-xs font-bold shadow-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {QUESTION_TYPES.map(t => (
+                              <SelectItem key={t.value} value={t.value} className="text-xs font-bold">
+                                {t.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Language Selector (When Coding / Practical) */}
+                      {(q.type === 'coding' || q.type === 'practical') && (
+                        <div className="flex items-center gap-1.5">
+                          <Label className="text-[10px] font-bold text-emerald-700 uppercase">Lang:</Label>
+                          <Select
+                            value={q.language || 'javascript'}
+                            onValueChange={(val) => handleUpdateQuestion(idx, 'language', val)}
+                          >
+                            <SelectTrigger className="h-8 w-32 rounded-lg bg-white border-emerald-300 text-xs font-black text-emerald-700 uppercase shadow-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SUPPORTED_LANGUAGES.map(lang => (
+                                <SelectItem key={lang.value} value={lang.value} className="text-xs font-bold uppercase">
+                                  {lang.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
                       {/* Difficulty Selector */}
                       <div className="flex items-center gap-1.5">
                         <Label className="text-[10px] font-bold text-slate-500 uppercase">Level:</Label>
