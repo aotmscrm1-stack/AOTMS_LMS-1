@@ -117,6 +117,25 @@ const SUPPORTED_LANGUAGES = [
   { value: 'kotlin', label: 'Kotlin' },
   { value: 'swift', label: 'Swift' },
 ];
+export const normalizeLanguage = (raw?: string): string => {
+  if (!raw) return 'javascript';
+  const l = raw.toLowerCase().trim();
+  if (l.includes('py')) return 'python';
+  if (l.includes('type') || l === 'ts') return 'typescript';
+  if (l.includes('script') || l.includes('node') || l === 'js') return 'javascript';
+  if (l.includes('c++') || l.includes('cpp')) return 'cpp';
+  if (l === 'c') return 'c';
+  if (l.includes('c#') || l.includes('csharp')) return 'csharp';
+  if (l.includes('java')) return 'java';
+  if (l.includes('sql')) return 'sql';
+  if (l.includes('go')) return 'go';
+  if (l.includes('rust')) return 'rust';
+  if (l.includes('php')) return 'php';
+  if (l.includes('ruby')) return 'ruby';
+  if (l.includes('kotlin')) return 'kotlin';
+  if (l.includes('swift')) return 'swift';
+  return l || 'javascript';
+};
 
 export interface TestCaseFormItem {
   input: string;
@@ -147,7 +166,7 @@ const EMPTY_QUESTION: QuestionFormItem = {
   topic: '',
   question_text: '',
   type: 'mcq',
-  language: 'python',
+  language: 'javascript',
   difficulty: 'medium',
   options: ['', '', '', ''],
   correct_answer: '',
@@ -196,11 +215,12 @@ function parseAiText(
   fallbackTopic: string,
   fallbackType: string,
   fallbackDifficulty: string,
+  fallbackLanguage = 'javascript',
 ): AiAnalysisResult {
   let rawText = text.trim();
 
-  // ── 0. Pre-clean: Remove markdown code blocks if present ──
-  const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  // ── 0. Pre-clean: Remove markdown code blocks if entire content is wrapped in ```json ... ``` ──
+  const jsonMatch = rawText.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   if (jsonMatch) {
     rawText = jsonMatch[1].trim();
   }
@@ -215,7 +235,7 @@ function parseAiText(
       try {
         const innerMatch = innerText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
         json = JSON.parse(innerMatch ? innerMatch[1] : innerText);
-      } catch (e) {
+      } catch {
         rawText = innerText;
       }
     } else if (typeof json === 'object' && json !== null && json.output && typeof json.output === 'string') {
@@ -223,7 +243,7 @@ function parseAiText(
       try {
         const innerMatch = innerText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
         json = JSON.parse(innerMatch ? innerMatch[1] : innerText);
-      } catch (e) {
+      } catch {
         rawText = innerText;
       }
     }
@@ -233,13 +253,11 @@ function parseAiText(
      */
     const findQuestionsArray = (obj: unknown): unknown[] | null => {
       if (Array.isArray(obj)) {
-        // Check if elements look like questions
         const looksLikeQuestions = obj.length > 0 && obj.some(item => 
-          item && typeof item === 'object' && ('question' in item || 'question_text' in item || 'text' in item || 'Question' in item)
+          item && typeof item === 'object' && ('question' in item || 'question_text' in item || 'text' in item || 'Question' in item || 'title' in item)
         );
         if (looksLikeQuestions) return obj;
         
-        // If not, maybe it's an array of objects that have the array inside?
         for (const item of obj) {
           const found = findQuestionsArray(item);
           if (found) return found;
@@ -247,19 +265,16 @@ function parseAiText(
       } else if (typeof obj === 'object' && obj !== null) {
         const o = obj as Record<string, unknown>;
         
-        // NEW: Check if this object itself IS a question
-        if ('question' in o || 'question_text' in o || 'text' in o || 'Question' in o || 'QuestionText' in o) {
+        if ('question' in o || 'question_text' in o || 'text' in o || 'Question' in o || 'QuestionText' in o || 'title' in o) {
           return [obj];
         }
 
-        // Check standard keys
         if (Array.isArray(o.questions)) return o.questions as unknown[];
         if (Array.isArray(o.data)) return o.data as unknown[];
         if (Array.isArray(o.items)) return o.items as unknown[];
         if (Array.isArray(o.output)) return o.output as unknown[];
         if (o.data && typeof o.data === 'object') return findQuestionsArray(o.data);
         
-        // Search all keys
         for (const key in o) {
           if (key === 'questions' || key === 'data' || key === 'items' || key === 'output') continue;
           const found = findQuestionsArray(o[key]);
@@ -276,8 +291,7 @@ function parseAiText(
 
       for (const item of questionsArray) {
         const itemObj = item as Record<string, unknown>;
-        // loose check for question-like object
-        const qText = String(itemObj.question || itemObj.question_text || itemObj.Question || itemObj.questionText || itemObj.text || '');
+        const qText = String(itemObj.question || itemObj.question_text || itemObj.Question || itemObj.questionText || itemObj.text || itemObj.title || '');
 
         if (!qText) continue;
 
@@ -307,10 +321,23 @@ function parseAiText(
           });
         }
 
-        // Correct Answer
-        let ans = String(itemObj.answer || itemObj.correct_answer || itemObj.Answer || itemObj.correctAnswer || '');
+        // Correct Answer / Solution Code
+        let ans = String(
+          itemObj.answer ||
+          itemObj.correct_answer ||
+          itemObj.Answer ||
+          itemObj.correctAnswer ||
+          itemObj.solution_code ||
+          itemObj.solutionCode ||
+          itemObj['Solution Code'] ||
+          itemObj.code ||
+          itemObj.Code ||
+          itemObj.solution ||
+          itemObj.ideal_answer ||
+          itemObj.idealAnswer ||
+          ''
+        );
 
-        // NEW: If correct_answer was not found at the root, check if any option has isCorrect: true
         if (!ans && Array.isArray(itemOptions)) {
           const correctOpt = itemOptions.find((o: unknown) => 
             o && typeof o === 'object' && ((o as Record<string, unknown>).isCorrect === true || (o as Record<string, unknown>).is_correct === true)
@@ -321,7 +348,6 @@ function parseAiText(
           }
         }
 
-        // Resolve "A", "B", etc.
         if (opts.length > 0 && /^[A-E]$/i.test(String(ans))) {
           const idx = String(ans).toUpperCase().charCodeAt(0) - 65;
           if (opts[idx]) ans = opts[idx];
@@ -332,13 +358,93 @@ function parseAiText(
         if (rawDiff.includes('easy') || rawDiff.includes('simple')) normDifficulty = 'easy';
         else if (rawDiff.includes('hard') || rawDiff.includes('difficult') || rawDiff.includes('deficult')) normDifficulty = 'hard';
 
+        // Extract Coding / Practical fields
+        const inputFormat = String(
+          itemObj.input_format ||
+          itemObj.inputFormat ||
+          itemObj['Input Format'] ||
+          itemObj['input_format_specification'] ||
+          itemObj['Input format specification'] ||
+          itemObj.input_specification ||
+          ''
+        );
+        const outputFormat = String(
+          itemObj.output_format ||
+          itemObj.outputFormat ||
+          itemObj['Output Format'] ||
+          itemObj['output_format_specification'] ||
+          itemObj['Output format specification'] ||
+          itemObj.output_specification ||
+          ''
+        );
+        const constraints = String(
+          itemObj.constraints ||
+          itemObj.Constraints ||
+          itemObj.constraint ||
+          itemObj.limitations ||
+          ''
+        );
+        const sampleInput = String(
+          itemObj.sample_input ||
+          itemObj.sampleInput ||
+          itemObj['Sample Input'] ||
+          itemObj['sample_input_specification'] ||
+          itemObj['sample_input_1'] ||
+          itemObj.sampleInput1 ||
+          ''
+        );
+        const sampleOutput = String(
+          itemObj.sample_output ||
+          itemObj.sampleOutput ||
+          itemObj['Sample Output'] ||
+          itemObj['sample_output_specification'] ||
+          itemObj['sample_output_1'] ||
+          itemObj.sampleOutput1 ||
+          ''
+        );
+        const rawLang = String(
+          itemObj.language ||
+          itemObj.Language ||
+          itemObj.target_language ||
+          itemObj.targetLanguage ||
+          itemObj.lang ||
+          fallbackLanguage ||
+          'javascript'
+        );
+        const normLang = normalizeLanguage(rawLang);
+
         const rawType = String(itemObj.type || itemObj.question_type || fallbackType).toLowerCase();
         let normType = 'mcq';
         if (rawType.includes('true') || rawType.includes('boolean')) normType = 'true_false';
         else if (rawType.includes('short')) normType = 'short';
         else if (rawType.includes('long') || rawType.includes('essay')) normType = 'long';
         else if (rawType.includes('fill') || rawType.includes('blank')) normType = 'fill_blank';
-        else if (rawType.includes('code') || rawType.includes('coding') || rawType.includes('practical')) normType = 'coding';
+        else if (
+          rawType.includes('code') ||
+          rawType.includes('coding') ||
+          rawType.includes('practical') ||
+          inputFormat ||
+          outputFormat ||
+          sampleInput ||
+          sampleOutput ||
+          constraints ||
+          Array.isArray(itemObj.test_cases)
+        ) {
+          normType = 'coding';
+        }
+
+        // Test Cases
+        let testCases = (Array.isArray(itemObj.test_cases) ? itemObj.test_cases : (Array.isArray(itemObj.testCases) ? itemObj.testCases : [])) as TestCaseFormItem[];
+        if (testCases.length === 0 && (sampleInput || sampleOutput)) {
+          testCases = [
+            {
+              input: sampleInput,
+              expected_output: sampleOutput,
+              explanation: 'Sample public test case',
+              is_hidden: false,
+            }
+          ];
+        }
 
         mappedQuestions.push({
           topic: String(itemObj.topic || fallbackTopic),
@@ -348,14 +454,14 @@ function parseAiText(
           options: opts.length >= 2 ? opts : (normType === 'true_false' ? ['True', 'False'] : undefined),
           correct_answer: ans,
           explanation: String(itemObj.explanation || itemObj.Explanation || ''),
-          language: String(itemObj.language || itemObj.target_language || 'python'),
-          input_format: String(itemObj.input_format || itemObj.inputFormat || ''),
-          output_format: String(itemObj.output_format || itemObj.outputFormat || ''),
-          constraints: String(itemObj.constraints || ''),
-          sample_input: String(itemObj.sample_input || itemObj.sampleInput || ''),
-          sample_output: String(itemObj.sample_output || itemObj.sampleOutput || ''),
-          test_cases: (Array.isArray(itemObj.test_cases) ? itemObj.test_cases : (Array.isArray(itemObj.testCases) ? itemObj.testCases : [])) as TestCaseFormItem[],
-          marks: Number(itemObj.marks) || (normDifficulty === 'hard' ? 5 : normDifficulty === 'medium' ? 2 : 1),
+          language: normLang,
+          input_format: inputFormat,
+          output_format: outputFormat,
+          constraints: constraints,
+          sample_input: sampleInput,
+          sample_output: sampleOutput,
+          test_cases: testCases,
+          marks: Number(itemObj.marks) || (normType === 'coding' ? 5 : (normDifficulty === 'hard' ? 5 : normDifficulty === 'medium' ? 2 : 1)),
         });
       }
 
@@ -363,8 +469,8 @@ function parseAiText(
         return { rawText, questions: mappedQuestions };
       }
     }
-  } catch (e) {
-    // Not valid JSON, treat as raw markdown/text
+  } catch {
+    // Not valid JSON, proceed to table and markdown/text parsing
   }
 
   // ── 1.5. Try to Parse Markdown Tables ──
@@ -413,22 +519,141 @@ function parseAiText(
     }
   }
 
-  // ── 2. Split into Blocks ──
+  // ── 2. Split into Blocks (Supports multiple questions or single challenge) ──
   const activeText = rawText
     .replace(/\*\*\s*Question/gi, '\n**Question')
     .replace(/^Question/gm, '\nQuestion');
 
-  const splitRegex = /\n(?=(?:\d+[.)])|(?:\*\*Question)|(?:Question\s))/i;
+  const splitRegex = /\n(?=(?:(?:\*{0,2}(?:Question|Problem|Challenge)\s*\d+[:.)\s]*)|\d+[.)]\s+|\n---\n|###\s+(?:Question|Problem)))/i;
   let blocks = activeText.split(splitRegex).map(b => b.trim()).filter(Boolean);
   if (blocks.length === 0 && rawText.length > 10) blocks = [rawText];
 
   const questions: AiQuestion[] = [];
   for (const block of blocks) {
-    if (!block.match(/Question|\?|Option/i)) continue;
+    if (!block.trim()) continue;
+
+    // Check if this block contains coding keywords or is designated as coding
+    const isCoding =
+      /Input\s*Format|Output\s*Format|Constraints|Sample\s*Input|Sample\s*Output|Solution\s*Code|```/i.test(block) ||
+      fallbackType === 'coding' ||
+      fallbackType === 'practical';
+
+    if (isCoding) {
+      // ── Coding Parser Branch ──
+      let extractedCodeLang = '';
+      let extractedCode = '';
+      const codeFenceMatch = block.match(/```([a-zA-Z0-9_#-]*)\s*([\s\S]*?)```/);
+      if (codeFenceMatch) {
+        extractedCodeLang = codeFenceMatch[1].trim();
+        extractedCode = codeFenceMatch[2].trim();
+      }
+
+      const sectionKeywords = [
+        { key: 'input_format', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Input\s*Format(?:\s*Specification)?|Input\s*Specification|Input\s*Format)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'output_format', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Output\s*Format(?:\s*Specification)?|Output\s*Specification|Output\s*Format)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'constraints', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Constraints?|Limitations?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'sample_input', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Sample\s*Input(?:\s*Specification)?(?:[ \t]*#?\d+)?|Example\s*Input(?:[ \t]*#?\d+)?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'sample_output', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Sample\s*Output(?:\s*Specification)?(?:[ \t]*#?\d+)?|Example\s*Output(?:[ \t]*#?\d+)?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'language', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:(?:Choose\s*)?(?:Target\s*)?(?:Programming\s*)?Language)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'solution_code', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:(?:Ideal\s*Answer\s*)?Solution\s*Code(?:\s*\/\s*Logic)?|Ideal\s*Answer|Solution(?:\s*Code)?|Reference\s*Solution)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'explanation', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Contextual\s*Explanation|Explanation|Notes?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'question_header', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Problem(?:\s*Statement)?|Question(?:\s*Text)?|Description|Task|Prompt)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+      ];
+
+      const matches: { key: string; index: number; length: number }[] = [];
+      for (const item of sectionKeywords) {
+        const rx = new RegExp(item.regex.source, 'gi');
+        let m: RegExpExecArray | null;
+        while ((m = rx.exec(block)) !== null) {
+          matches.push({
+            key: item.key,
+            index: m.index,
+            length: m[0].length,
+          });
+        }
+      }
+      matches.sort((a, b) => a.index - b.index);
+
+      const sections: Record<string, string> = {};
+      let questionPreText = '';
+
+      if (matches.length === 0) {
+        questionPreText = block.trim();
+      } else {
+        questionPreText = block.substring(0, matches[0].index).trim();
+        for (let i = 0; i < matches.length; i++) {
+          const cur = matches[i];
+          const contentStart = cur.index + cur.length;
+          const nextMatch = matches[i + 1];
+          const contentEnd = nextMatch ? nextMatch.index : block.length;
+          let content = block.substring(contentStart, contentEnd).trim();
+          content = content.replace(/^```[a-zA-Z0-9_#-]*\s*/, '').replace(/\s*```$/, '').trim();
+          if (!sections[cur.key]) {
+            sections[cur.key] = content;
+          }
+        }
+      }
+
+      let questionText = sections.question_header || questionPreText;
+      questionText = questionText
+        .replace(/^\d+[.)\s]+/, '')
+        .replace(/^\*{0,2}Question\s*(?:\(.*?\))?\*{0,2}[:\s-]*/i, '')
+        .replace(/^Q[:\s]*/i, '')
+        .replace(/\*\*/g, '')
+        .trim();
+
+      if (!questionText) {
+        questionText = fallbackTopic ? `${fallbackTopic} Coding Challenge` : 'Coding Practical Challenge';
+      }
+
+      let detectedLang = sections.language || extractedCodeLang || fallbackLanguage;
+      if (detectedLang) detectedLang = detectedLang.split('\n')[0].trim();
+      const finalLang = normalizeLanguage(detectedLang || fallbackLanguage);
+
+      const finalSolution = sections.solution_code || extractedCode || '';
+      const sampleInput = sections.sample_input || '';
+      const sampleOutput = sections.sample_output || '';
+
+      const testCases: TestCaseFormItem[] = [];
+      if (sampleInput || sampleOutput) {
+        testCases.push({
+          input: sampleInput,
+          expected_output: sampleOutput,
+          explanation: 'Sample public test case',
+          is_hidden: false,
+        });
+      }
+
+      questions.push({
+        topic: fallbackTopic,
+        question_text: questionText,
+        type: 'coding',
+        question_type: 'coding',
+        difficulty: fallbackDifficulty || 'medium',
+        language: finalLang,
+        input_format: sections.input_format || '',
+        output_format: sections.output_format || '',
+        constraints: sections.constraints || '',
+        sample_input: sampleInput,
+        sample_output: sampleOutput,
+        correct_answer: finalSolution,
+        explanation: sections.explanation || '',
+        test_cases: testCases,
+        marks: 5,
+      });
+      continue;
+    }
+
+    // ── MCQ / Subjective Branch ──
     const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
     if (!lines.length) continue;
 
-    let questionLine = lines[0].replace(/^\d+[.)\s]+/, '').replace(/^\**Question\s*(\(.*\))?\**[:\s-]*/i, '').replace(/^Q[:\s]*/i, '').replace(/\*\*/g, '').trim();
+    let questionLine = lines[0]
+      .replace(/^\d+[.)\s]+/, '')
+      .replace(/^\**Question\s*(\(.*\))?\**[:\s-]*/i, '')
+      .replace(/^Q[:\s]*/i, '')
+      .replace(/\*\*/g, '')
+      .trim();
     if (!questionLine && lines.length > 1) questionLine = lines[1].replace(/\*\*/g, '').trim();
 
     const options: string[] = [];
@@ -444,7 +669,6 @@ function parseAiText(
       const ansMatch = line.match(/^\*{0,2}(?:Correct\s*)?Answer\*{0,2}[:\s]+(.+)/i);
       if (ansMatch) {
         let ansText = ansMatch[1].replace(/\*\*/g, '').trim();
-        // If it's just a letter and we have options, map the letter to the option text
         const letterMatch = ansText.match(/^([A-E])\b/i);
         if (letterMatch && options.length > 0) {
           const idx = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
@@ -460,10 +684,14 @@ function parseAiText(
       }
     }
     if (!questionLine) continue;
+
+    const detectedType = options.length >= 2 ? 'mcq' : fallbackType;
+
     questions.push({
       topic: fallbackTopic,
       question_text: questionLine,
-      question_type: fallbackType,
+      question_type: detectedType,
+      type: detectedType,
       difficulty: fallbackDifficulty,
       options: options.length >= 2 ? options : undefined,
       correct_answer: correctAnswer,
@@ -473,7 +701,7 @@ function parseAiText(
   }
 
   if (questions.length > 0) return { rawText, questions };
-  return { rawText, parseError: 'Could not parse questions. Try ensuring the format is "Question: ... \n A) ... \n Answer: ..."' };
+  return { rawText, parseError: 'Could not parse questions. Try ensuring format includes Question, Input Format, Output Format, Constraints, etc.' };
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -540,6 +768,7 @@ export function QuestionBankManager({
   // These control the "next batch" of questions to be added
   const [globalTopic, setGlobalTopic] = useState('');
   const [globalType, setGlobalType] = useState('mcq');
+  const [globalLanguage, setGlobalLanguage] = useState('javascript');
   const [globalDifficulty, setGlobalDifficulty] = useState('medium');
   const [globalCount, setGlobalCount] = useState(1);
   const [globalMarks, setGlobalMarks] = useState(1);
@@ -619,8 +848,9 @@ export function QuestionBankManager({
       ...EMPTY_QUESTION,
       topic: globalTopic,
       type: targetType,
+      language: globalLanguage,
       difficulty: globalDifficulty,
-      marks: globalMarks,
+      marks: targetType === 'coding' ? Math.max(globalMarks, 5) : globalMarks,
     }));
     setBatchQuestions(prev => [...prev, ...blanks]);
   };
@@ -687,27 +917,43 @@ export function QuestionBankManager({
       }
 
       // Attempt Automatic Parsing & Distribution
-      const parsed = parseAiText(rawText, globalTopic, globalType, globalDifficulty);
+      const parsed = parseAiText(rawText, globalTopic, globalType, globalDifficulty, globalLanguage);
 
       if (parsed.questions && parsed.questions.length > 0) {
         // Success! Auto-fill
-        const newForms = parsed.questions.map(q => ({
-          ...EMPTY_QUESTION,
-          topic: globalTopic,
-          type: q.type || globalType,
-          difficulty: q.difficulty || globalDifficulty,
-          question_text: q.question_text,
-          options: (q.options && q.options.length >= 2) ? q.options : ['', '', '', ''],
-          correct_answer: q.correct_answer || '',
-          explanation: (q.explanation || (q as Record<string, unknown>).explanation || '') as string,
-          input_format: ((q as Record<string, unknown>).input_format || '') as string,
-          output_format: ((q as Record<string, unknown>).output_format || '') as string,
-          constraints: ((q as Record<string, unknown>).constraints || '') as string,
-          sample_input: ((q as Record<string, unknown>).sample_input || '') as string,
-          sample_output: ((q as Record<string, unknown>).sample_output || '') as string,
-          test_cases: ((q as Record<string, unknown>).test_cases || []) as { input: string; expected_output: string; explanation?: string; is_hidden?: boolean }[],
-          marks: q.marks || globalMarks,
-        }));
+        const newForms = parsed.questions.map(q => {
+          const qType = q.type || globalType;
+          const isCode = qType === 'coding' || qType === 'practical';
+          const sampleIn = ((q as Record<string, unknown>).sample_input || '') as string;
+          const sampleOut = ((q as Record<string, unknown>).sample_output || '') as string;
+          const rawTestCases = ((q as Record<string, unknown>).test_cases || []) as TestCaseFormItem[];
+
+          let tc = rawTestCases;
+          if (tc.length === 0 && (sampleIn || sampleOut)) {
+            tc = [{ input: sampleIn, expected_output: sampleOut, explanation: 'Sample public test case', is_hidden: false }];
+          } else if (tc.length === 0 && isCode) {
+            tc = [{ input: '', expected_output: '', explanation: '', is_hidden: false }];
+          }
+
+          return {
+            ...EMPTY_QUESTION,
+            topic: globalTopic,
+            type: qType,
+            language: normalizeLanguage(String(q.language || (q as Record<string, unknown>).target_language || globalLanguage || 'javascript')),
+            difficulty: q.difficulty || globalDifficulty,
+            question_text: q.question_text,
+            options: (q.options && q.options.length >= 2) ? q.options : (qType === 'true_false' ? ['True', 'False'] : ['', '', '', '']),
+            correct_answer: q.correct_answer || '',
+            explanation: (q.explanation || (q as Record<string, unknown>).explanation || '') as string,
+            input_format: ((q as Record<string, unknown>).input_format || '') as string,
+            output_format: ((q as Record<string, unknown>).output_format || '') as string,
+            constraints: ((q as Record<string, unknown>).constraints || '') as string,
+            sample_input: sampleIn,
+            sample_output: sampleOut,
+            test_cases: tc,
+            marks: q.marks || (isCode ? 5 : globalMarks),
+          };
+        });
 
         setBatchQuestions(prev => [...prev, ...newForms]);
 
@@ -751,27 +997,42 @@ export function QuestionBankManager({
   const handleDistribute = () => {
     if (!rawInput.trim()) return;
 
-    const parsed = parseAiText(rawInput, globalTopic, globalType, globalDifficulty);
+    const parsed = parseAiText(rawInput, globalTopic, globalType, globalDifficulty, globalLanguage);
 
     if (parsed.questions && parsed.questions.length > 0) {
-      const newForms = parsed.questions.map(q => ({
-        ...EMPTY_QUESTION,
-        topic: globalTopic,
-        type: q.type || globalType,
-        difficulty: q.difficulty || globalDifficulty,
-        question_text: q.question_text,
-        options: (q.options && q.options.length >= 2) ? q.options : (q.type === 'true_false' ? ['True', 'False'] : ['', '', '', '']),
-        correct_answer: q.correct_answer || '',
-        explanation: (q.explanation || (q as Record<string, unknown>).explanation || '') as string,
-        language: ((q as Record<string, unknown>).language || 'python') as string,
-        input_format: ((q as Record<string, unknown>).input_format || '') as string,
-        output_format: ((q as Record<string, unknown>).output_format || '') as string,
-        constraints: ((q as Record<string, unknown>).constraints || '') as string,
-        sample_input: ((q as Record<string, unknown>).sample_input || '') as string,
-        sample_output: ((q as Record<string, unknown>).sample_output || '') as string,
-        test_cases: ((q as Record<string, unknown>).test_cases || []) as TestCaseFormItem[],
-        marks: q.marks || (q.difficulty === 'hard' ? 5 : q.difficulty === 'medium' ? 2 : 1),
-      }));
+      const newForms = parsed.questions.map(q => {
+        const qType = q.type || globalType;
+        const isCode = qType === 'coding' || qType === 'practical';
+        const sampleIn = ((q as Record<string, unknown>).sample_input || '') as string;
+        const sampleOut = ((q as Record<string, unknown>).sample_output || '') as string;
+        const rawTestCases = ((q as Record<string, unknown>).test_cases || []) as TestCaseFormItem[];
+
+        let tc = rawTestCases;
+        if (tc.length === 0 && (sampleIn || sampleOut)) {
+          tc = [{ input: sampleIn, expected_output: sampleOut, explanation: 'Sample public test case', is_hidden: false }];
+        } else if (tc.length === 0 && isCode) {
+          tc = [{ input: '', expected_output: '', explanation: '', is_hidden: false }];
+        }
+
+        return {
+          ...EMPTY_QUESTION,
+          topic: globalTopic,
+          type: qType,
+          language: normalizeLanguage(String(q.language || (q as Record<string, unknown>).target_language || globalLanguage || 'javascript')),
+          difficulty: q.difficulty || globalDifficulty,
+          question_text: q.question_text,
+          options: (q.options && q.options.length >= 2) ? q.options : (qType === 'true_false' ? ['True', 'False'] : ['', '', '', '']),
+          correct_answer: q.correct_answer || '',
+          explanation: (q.explanation || (q as Record<string, unknown>).explanation || '') as string,
+          input_format: ((q as Record<string, unknown>).input_format || '') as string,
+          output_format: ((q as Record<string, unknown>).output_format || '') as string,
+          constraints: ((q as Record<string, unknown>).constraints || '') as string,
+          sample_input: sampleIn,
+          sample_output: sampleOut,
+          test_cases: tc,
+          marks: q.marks || (isCode ? 5 : (q.difficulty === 'hard' ? 5 : q.difficulty === 'medium' ? 2 : 1)),
+        };
+      });
       setBatchQuestions(prev => [...prev, ...newForms]);
       setShowRaw(false);
       toast({
@@ -817,7 +1078,7 @@ export function QuestionBankManager({
             topic: batchTopic,
             question_text: q.question_text,
             type: finalType,
-            language: q.language || 'python',
+            language: normalizeLanguage(q.language || globalLanguage || 'javascript'),
             difficulty: q.difficulty || globalDifficulty,
             input_format: q.input_format || null,
             output_format: q.output_format || null,
@@ -939,7 +1200,7 @@ export function QuestionBankManager({
           </div>
 
           {/* Global Controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <div className="space-y-2">
               <Label>Topic <span className="text-destructive">*</span></Label>
               <Input
@@ -955,6 +1216,19 @@ export function QuestionBankManager({
                 <SelectContent>
                   {QUESTION_TYPES.map(t => (
                     <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Choose Language</Label>
+              <Select value={globalLanguage} onValueChange={setGlobalLanguage}>
+                <SelectTrigger className="font-bold text-xs uppercase"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SUPPORTED_LANGUAGES.map(lang => (
+                    <SelectItem key={lang.value} value={lang.value} className="font-bold text-xs uppercase">
+                      {lang.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1123,6 +1397,28 @@ export function QuestionBankManager({
                         </Select>
                       </div>
 
+                      {/* Choose Language Selector - prominent when coding/practical */}
+                      {(q.type === 'coding' || q.type === 'practical') && (
+                        <div className="flex items-center gap-1.5">
+                          <Label className="text-[10px] font-bold text-emerald-700 uppercase">Language:</Label>
+                          <Select
+                            value={q.language || 'javascript'}
+                            onValueChange={(val) => handleUpdateQuestion(idx, 'language', val)}
+                          >
+                            <SelectTrigger className="h-8 w-40 rounded-lg bg-emerald-50 border-emerald-300 text-xs font-bold text-emerald-800 shadow-xs">
+                              <SelectValue placeholder="Choose Language" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SUPPORTED_LANGUAGES.map(lang => (
+                                <SelectItem key={lang.value} value={lang.value} className="text-xs font-bold uppercase">
+                                  {lang.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
                       {/* Difficulty Selector */}
                       <div className="flex items-center gap-1.5">
                         <Label className="text-[10px] font-bold text-slate-500 uppercase">Level:</Label>
@@ -1260,13 +1556,13 @@ export function QuestionBankManager({
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-slate-700">Target Programming Language</Label>
+                                <Label className="text-xs font-bold text-slate-700">Choose Programming Language</Label>
                                 <Select 
-                                  value={q.language || 'python'} 
+                                  value={q.language || 'javascript'} 
                                   onValueChange={(val) => handleUpdateQuestion(idx, 'language', val)}
                                 >
                                   <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 font-bold text-xs uppercase">
-                                    <SelectValue placeholder="Select Language" />
+                                    <SelectValue placeholder="Choose Language" />
                                   </SelectTrigger>
                                   <SelectContent>
                                     {SUPPORTED_LANGUAGES.map(lang => (
