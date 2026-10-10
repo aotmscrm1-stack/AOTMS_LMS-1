@@ -44,7 +44,7 @@ const QuestionBankSchema = new Schema({
     correct_answer: { type: String }, // Stored answer for T/F, Short, etc.
     type: { 
         type: String, 
-        enum: ['multiple_choice', 'true_false', 'subjective', 'short_answer', 'long_answer', 'fill_blank', 'coding'], 
+        enum: ['multiple_choice', 'true_false', 'subjective', 'short_answer', 'long_answer', 'fill_blank', 'coding', 'practical'], 
         default: 'multiple_choice' 
     },
     language: { type: String, default: 'javascript' }, // For coding type questions

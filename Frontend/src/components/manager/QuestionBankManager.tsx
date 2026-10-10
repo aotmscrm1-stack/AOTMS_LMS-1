@@ -811,7 +811,7 @@ export function QuestionBankManager({
           else if (type === 'short' || type === 'short_answer') finalType = 'short_answer';
           else if (type === 'long' || type === 'long_answer') finalType = 'long_answer';
           else if (type === 'fill_blank') finalType = 'fill_blank';
-          else if (type === 'coding') finalType = 'coding';
+          else if (type === 'coding' || type === 'practical') finalType = 'coding';
 
           return {
             topic: batchTopic,
@@ -837,7 +837,7 @@ export function QuestionBankManager({
                 : []) 
               : [],
             correct_answer: q.correct_answer || '',
-            marks: Number(globalMarks) || 1,
+            marks: Number(q.marks || globalMarks) || 1,
             created_by: user.id,
             approval_status: 'approved', // Auto-approve created questions so students can access them immediately
           };
@@ -1094,12 +1094,64 @@ export function QuestionBankManager({
                 </button>
 
                 <CardContent className="pt-6 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-100">
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="h-6 text-[10px] px-2">{idx + 1}</Badge>
-                      <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">
-                        Question Details
+                      <Badge variant="outline" className="h-6 text-[10px] px-2 font-mono font-bold bg-slate-50">{idx + 1}</Badge>
+                      <span className="text-[10px] text-muted-foreground uppercase font-black tracking-wider">
+                        Question #{idx + 1}
                       </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Explicit Question Type Selector */}
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[10px] font-bold text-slate-500 uppercase">Type:</Label>
+                        <Select
+                          value={q.type || 'mcq'}
+                          onValueChange={(val) => handleUpdateQuestion(idx, 'type', val)}
+                        >
+                          <SelectTrigger className="h-8 w-44 rounded-lg bg-white border-slate-200 text-xs font-bold shadow-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {QUESTION_TYPES.map(t => (
+                              <SelectItem key={t.value} value={t.value} className="text-xs font-semibold">
+                                {t.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Difficulty Selector */}
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[10px] font-bold text-slate-500 uppercase">Level:</Label>
+                        <Select
+                          value={q.difficulty || 'medium'}
+                          onValueChange={(val) => handleUpdateQuestion(idx, 'difficulty', val)}
+                        >
+                          <SelectTrigger className="h-8 w-28 rounded-lg bg-white border-slate-200 text-xs font-bold shadow-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="easy" className="text-emerald-600 font-bold text-xs">🟢 Easy</SelectItem>
+                            <SelectItem value="medium" className="text-amber-600 font-bold text-xs">🟡 Medium</SelectItem>
+                            <SelectItem value="hard" className="text-rose-600 font-bold text-xs">🔴 Hard</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Marks Input */}
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[10px] font-bold text-slate-500 uppercase">Marks:</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={q.marks || 1}
+                          onChange={(e) => handleUpdateQuestion(idx, 'marks', parseInt(e.target.value) || 1)}
+                          className="h-8 w-16 text-xs font-bold text-center bg-white border-slate-200"
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1192,15 +1244,18 @@ export function QuestionBankManager({
                       </div>
                     )}
 
-                    {/* Open Answer Layout (Short/Long/Coding) */}
+                    {/* Open Answer Layout (Short/Long/Coding/Practical) */}
                     {(q.type !== 'mcq' && q.type !== 'true_false') && (
                       <div className="space-y-4">
-                        {q.type === 'coding' && (
-                          <div className="space-y-4 border-2 border-primary/20 bg-primary/5 p-4 rounded-2xl">
+                        {(q.type === 'coding' || q.type === 'practical') && (
+                          <div className="space-y-4 border-2 border-emerald-500/20 bg-emerald-500/5 p-4 sm:p-5 rounded-2xl">
                             <div className="flex items-center justify-between">
-                              <Label className="text-xs font-black uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                <Code2 className="h-4 w-4" /> Coding Challenge Configuration
+                              <Label className="text-xs font-black uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
+                                <Code2 className="h-4 w-4" /> Coding / Practical Challenge Specifications
                               </Label>
+                              <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-300 text-[10px] uppercase font-bold">
+                                Automated Evaluation Ready
+                              </Badge>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1228,7 +1283,7 @@ export function QuestionBankManager({
                                 <Input
                                   value={q.constraints || ''}
                                   onChange={(e) => handleUpdateQuestion(idx, 'constraints', e.target.value)}
-                                  placeholder="e.g. 1 <= price <= 100000, 1 <= quantity <= 100"
+                                  placeholder="e.g. 1 <= N <= 10^5, -1000 <= A[i] <= 1000"
                                   className="h-10 rounded-xl bg-white border-slate-200 font-mono text-xs"
                                 />
                               </div>
@@ -1236,24 +1291,48 @@ export function QuestionBankManager({
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-slate-700">Input Format</Label>
+                                <Label className="text-xs font-bold text-slate-700">Input Format Specification</Label>
                                 <Textarea
                                   value={q.input_format || ''}
                                   onChange={(e) => handleUpdateQuestion(idx, 'input_format', e.target.value)}
                                   rows={3}
-                                  className="bg-white border-slate-200 text-xs"
-                                  placeholder="Line 1: price (float)&#10;Line 2: quantity (int)..."
+                                  className="bg-white border-slate-200 text-xs font-mono"
+                                  placeholder="Line 1: An integer T representing test cases&#10;Line 2: Space separated array of N integers..."
                                 />
                               </div>
 
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-slate-700">Output Format</Label>
+                                <Label className="text-xs font-bold text-slate-700">Output Format Specification</Label>
                                 <Textarea
                                   value={q.output_format || ''}
                                   onChange={(e) => handleUpdateQuestion(idx, 'output_format', e.target.value)}
                                   rows={3}
-                                  className="bg-white border-slate-200 text-xs"
-                                  placeholder="Print Total Amount, Discount, Final Amount..."
+                                  className="bg-white border-slate-200 text-xs font-mono"
+                                  placeholder="Print the single integer result or line-by-line answers..."
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold text-slate-700">Sample Input (Public)</Label>
+                                <Textarea
+                                  value={q.sample_input || ''}
+                                  onChange={(e) => handleUpdateQuestion(idx, 'sample_input', e.target.value)}
+                                  rows={3}
+                                  className="bg-white border-slate-200 text-xs font-mono"
+                                  placeholder="e.g. 5&#10;10 20 30 40 50"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold text-slate-700">Sample Output (Public)</Label>
+                                <Textarea
+                                  value={q.sample_output || ''}
+                                  onChange={(e) => handleUpdateQuestion(idx, 'sample_output', e.target.value)}
+                                  rows={3}
+                                  className="bg-white border-slate-200 text-xs font-mono"
+                                  placeholder="e.g. 150"
                                 />
                               </div>
                             </div>
@@ -1262,7 +1341,7 @@ export function QuestionBankManager({
                             <div className="space-y-3 pt-2">
                               <div className="flex items-center justify-between">
                                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                  <TerminalIcon className="h-4 w-4 text-emerald-600" /> Test Cases & Example Inputs/Outputs
+                                  <TerminalIcon className="h-4 w-4 text-emerald-600" /> Automated Test Cases ({ (q.test_cases || []).length })
                                 </Label>
                                 <Button
                                   variant="outline"
@@ -1275,7 +1354,7 @@ export function QuestionBankManager({
                                       { input: '', expected_output: '', explanation: '', is_hidden: false }
                                     ]);
                                   }}
-                                  className="h-7 text-xs rounded-lg font-bold bg-white text-primary border-primary/30 hover:bg-primary/5"
+                                  className="h-7 text-xs rounded-lg font-bold bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50"
                                 >
                                   <Plus className="h-3.5 w-3.5 mr-1" /> Add Test Case
                                 </Button>
@@ -1284,11 +1363,11 @@ export function QuestionBankManager({
                               {(q.test_cases || [{ input: q.sample_input || '', expected_output: q.sample_output || '', is_hidden: false }]).map((tc, tcIdx) => (
                                 <div key={tcIdx} className="bg-white p-3 rounded-xl border border-slate-200 space-y-3">
                                   <div className="flex items-center justify-between">
-                                    <Badge variant="outline" className="text-[10px] font-bold">
-                                      Test Case #{tcIdx + 1} {tc.is_hidden ? '(Hidden)' : '(Sample)'}
+                                    <Badge variant="outline" className={cn("text-[10px] font-bold", tc.is_hidden ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200")}>
+                                      Test Case #{tcIdx + 1} {tc.is_hidden ? '(Hidden Evaluation)' : '(Public Sample)'}
                                     </Badge>
                                     <div className="flex items-center gap-2">
-                                      <label className="flex items-center gap-1 text-[10px] text-slate-600 cursor-pointer">
+                                      <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
                                         <input
                                           type="checkbox"
                                           checked={!!tc.is_hidden}
@@ -1301,7 +1380,7 @@ export function QuestionBankManager({
                                           }}
                                           className="rounded text-primary"
                                         />
-                                        Is Hidden Test Case?
+                                        Hidden Test Case (Protected from student preview)
                                       </label>
                                       {((q.test_cases || []).length > 1) && (
                                         <Button
@@ -1322,7 +1401,7 @@ export function QuestionBankManager({
 
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div className="space-y-1">
-                                      <Label className="text-[10px] font-bold text-slate-500">Expected Input</Label>
+                                      <Label className="text-[10px] font-bold text-slate-500">Standard Input (stdin)</Label>
                                       <Textarea
                                         value={tc.input || ''}
                                         onChange={(e) => {
@@ -1332,13 +1411,13 @@ export function QuestionBankManager({
                                           handleUpdateQuestion(idx, 'test_cases', updatedTc);
                                         }}
                                         rows={2}
-                                        placeholder="500&#10;4"
+                                        placeholder="Input lines fed into standard input..."
                                         className="font-mono text-xs bg-slate-900 text-emerald-400 border-slate-800"
                                       />
                                     </div>
 
                                     <div className="space-y-1">
-                                      <Label className="text-[10px] font-bold text-slate-500">Expected Output</Label>
+                                      <Label className="text-[10px] font-bold text-slate-500">Expected Output (stdout)</Label>
                                       <Textarea
                                         value={tc.expected_output || ''}
                                         onChange={(e) => {
@@ -1348,7 +1427,7 @@ export function QuestionBankManager({
                                           handleUpdateQuestion(idx, 'test_cases', updatedTc);
                                         }}
                                         rows={2}
-                                        placeholder="Total Amount: 2000&#10;Discount: 200&#10;Final Amount: 1800"
+                                        placeholder="Exact expected output text..."
                                         className="font-mono text-xs bg-slate-900 text-sky-300 border-slate-800"
                                       />
                                     </div>
@@ -1358,11 +1437,12 @@ export function QuestionBankManager({
                             </div>
                           </div>
                         )}
+
                         <div className="space-y-2">
                           <Label className="flex items-center gap-2">
-                            Ideal Answer Solution Code / Logic
-                            <Badge variant="outline" className="text-[10px] font-normal tracking-wide">
-                              {String(q.type || 'short').toUpperCase().replace('_', ' ')}
+                            <span>Ideal Answer Solution Code / Logic</span>
+                            <Badge variant="outline" className={cn("text-[10px] font-bold tracking-wide", (q.type === 'coding' || q.type === 'practical') ? "bg-emerald-500/10 text-emerald-700 border-emerald-300" : "")}>
+                              {(q.type === 'coding' || q.type === 'practical') ? 'CODING SOLUTION CODE' : String(q.type || 'short').toUpperCase().replace('_', ' ')}
                             </Badge>
                           </Label>
                           <Textarea
@@ -1370,9 +1450,9 @@ export function QuestionBankManager({
                             onChange={(e) => handleUpdateQuestion(idx, 'correct_answer', e.target.value)}
                             className={cn(
                               "min-h-[140px] font-mono leading-relaxed",
-                              q.type === 'coding' ? "bg-slate-900 text-emerald-400 border-slate-800" : "bg-slate-50 border-slate-200"
+                              (q.type === 'coding' || q.type === 'practical') ? "bg-slate-900 text-emerald-400 border-slate-800" : "bg-slate-50 border-slate-200"
                             )}
-                            placeholder={q.type === 'coding' ? "# Write solution code here..." : "Enter the correct answer..."}
+                            placeholder={(q.type === 'coding' || q.type === 'practical') ? "// Write full working solution code here..." : "Enter the correct answer..."}
                           />
                         </div>
                       </div>
@@ -1428,6 +1508,13 @@ export function QuestionBankManager({
                   className="rounded-xl h-12 px-5 border-slate-200 shadow-sm hover:border-rose-500 hover:bg-rose-50 transition-all text-[10px] font-bold uppercase tracking-widest"
                 >
                   <Plus className="h-4 w-4 mr-2 text-rose-500" /> + Long
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => handleAddBlanks('coding')} 
+                  className="rounded-xl h-12 px-5 border-emerald-300 shadow-sm hover:border-emerald-500 hover:bg-emerald-50 transition-all text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50/50"
+                >
+                  <Code2 className="h-4 w-4 mr-2 text-emerald-600" /> + Coding / Practical
                 </Button>
               </div>
             </div>
@@ -1719,8 +1806,102 @@ export function QuestionBankManager({
                           </div>
                         )}
 
-                        {/* Explanation & Details */}
-                        {(q.explanation || q.correct_answer) && (
+                        {/* Coding / Practical Challenge Specifications View */}
+                        {(q.type === 'coding' || q.type === 'practical') && (
+                          <div className="mt-4 p-4 rounded-2xl bg-slate-900 border border-slate-800 text-slate-100 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                              <div className="flex items-center gap-2">
+                                <Code2 className="h-4 w-4 text-emerald-400" />
+                                <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                                  Coding Challenge Specifications
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-[10px] uppercase font-mono font-bold bg-slate-800 text-slate-300 border-slate-700">
+                                  {q.language || 'javascript'}
+                                </Badge>
+                                {q.constraints && (
+                                  <Badge variant="outline" className="text-[10px] font-mono bg-slate-800 text-slate-300 border-slate-700">
+                                    {q.constraints}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Input / Output Format */}
+                            {(q.input_format || q.output_format) && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                {q.input_format && (
+                                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Input Format</span>
+                                    <pre className="font-mono text-emerald-300 whitespace-pre-wrap text-[11px]">{q.input_format}</pre>
+                                  </div>
+                                )}
+                                {q.output_format && (
+                                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Output Format</span>
+                                    <pre className="font-mono text-sky-300 whitespace-pre-wrap text-[11px]">{q.output_format}</pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Sample Input / Sample Output */}
+                            {(q.sample_input || q.sample_output) && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                {q.sample_input && (
+                                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sample Input</span>
+                                    <pre className="font-mono text-emerald-300 whitespace-pre-wrap text-[11px]">{q.sample_input}</pre>
+                                  </div>
+                                )}
+                                {q.sample_output && (
+                                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sample Output</span>
+                                    <pre className="font-mono text-sky-300 whitespace-pre-wrap text-[11px]">{q.sample_output}</pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Test Cases Summary */}
+                            {Array.isArray(q.test_cases) && q.test_cases.length > 0 && (
+                              <div className="space-y-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                  Configured Test Cases ({q.test_cases.length})
+                                </span>
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                  {q.test_cases.map((tc, tcIdx) => (
+                                    <div key={tcIdx} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono flex flex-wrap items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="outline" className={cn("text-[9px] font-bold", tc.is_hidden ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30")}>
+                                          TC #{tcIdx + 1} {tc.is_hidden ? '(Hidden)' : '(Sample)'}
+                                        </Badge>
+                                        <span className="text-slate-400">Input: <span className="text-emerald-300">{tc.input || '∅'}</span></span>
+                                      </div>
+                                      <span className="text-slate-400">Output: <span className="text-sky-300">{tc.expected_output || '∅'}</span></span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Ideal Solution Code */}
+                            {q.correct_answer && (
+                              <div className="space-y-1.5 pt-1">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                  <CheckCircle className="h-3.5 w-3.5" /> Ideal Solution Code
+                                </span>
+                                <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed shadow-inner">
+                                  {q.correct_answer}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Standard Explanation & Non-Coding Details */}
+                        {q.type !== 'coding' && q.type !== 'practical' && (q.explanation || q.correct_answer) && (
                           <div className="mt-4 p-4 rounded-xl bg-indigo-50/50 border border-indigo-100/50 space-y-2">
                             <div className="flex items-center gap-2 text-indigo-700">
                               <Sparkles className="h-4 w-4" />
