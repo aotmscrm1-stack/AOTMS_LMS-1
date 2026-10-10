@@ -549,15 +549,15 @@ function parseAiText(
       }
 
       const sectionKeywords = [
-        { key: 'input_format', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Input\s*Format(?:\s*Specification)?|Input\s*Specification|Input\s*Format)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'output_format', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Output\s*Format(?:\s*Specification)?|Output\s*Specification|Output\s*Format)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'constraints', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Constraints?|Limitations?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'sample_input', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Sample\s*Input(?:\s*Specification)?(?:[ \t]*#?\d+)?|Example\s*Input(?:[ \t]*#?\d+)?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'sample_output', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Sample\s*Output(?:\s*Specification)?(?:[ \t]*#?\d+)?|Example\s*Output(?:[ \t]*#?\d+)?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'language', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:(?:Choose\s*)?(?:Target\s*)?(?:Programming\s*)?Language)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'solution_code', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:(?:Ideal\s*Answer\s*)?Solution\s*Code(?:\s*\/\s*Logic)?|Ideal\s*Answer|Solution(?:\s*Code)?|Reference\s*Solution)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'explanation', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Contextual\s*Explanation|Explanation|Notes?)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
-        { key: 'question_header', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Problem(?:\s*Statement)?|Question(?:\s*Text)?|Description|Task|Prompt)(?:\*{0,2})[ \t]*(?::[ \t]*|[ \t]+-(?=[ \t])|[ \t]+|(?=\n)|$)/i },
+        { key: 'input_format', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Input\s*Format(?:\s*Specification)?|Input\s*Specification|Input\s*Format)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'output_format', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Output\s*Format(?:\s*Specification)?|Output\s*Specification|Output\s*Format)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'constraints', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Constraints?|Limitations?)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'sample_input', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Sample\s*Input(?:\s*Specification)?(?:[ \t]*#?\d+)?|Example\s*Input(?:[ \t]*#?\d+)?)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'sample_output', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Sample\s*Output(?:\s*Specification)?(?:[ \t]*#?\d+)?|Example\s*Output(?:[ \t]*#?\d+)?)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'language', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:(?:Choose\s*)?(?:Target\s*)?(?:Programming\s*)?Language)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'solution_code', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:(?:Ideal\s*Answer\s*)?Solution\s*Code(?:\s*\/\s*Logic)?|Ideal\s*Answer|Solution(?:\s*Code)?|Reference\s*Solution)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'explanation', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Contextual\s*Explanation|Explanation|Notes?)[:\s*]*(?:\*{0,2})[:\s-]*/i },
+        { key: 'question_header', regex: /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*{0,2})(?:Problem(?:\s*Statement)?|Question(?:\s*Text)?|Description|Task|Prompt)[:\s*]*(?:\*{0,2})[:\s-]*/i },
       ];
 
       const matches: { key: string; index: number; length: number }[] = [];
@@ -587,6 +587,7 @@ function parseAiText(
           const nextMatch = matches[i + 1];
           const contentEnd = nextMatch ? nextMatch.index : block.length;
           let content = block.substring(contentStart, contentEnd).trim();
+          content = content.replace(/^[*_:#\s-]+/, '').trim();
           content = content.replace(/^```[a-zA-Z0-9_#-]*\s*/, '').replace(/\s*```$/, '').trim();
           if (!sections[cur.key]) {
             sections[cur.key] = content;

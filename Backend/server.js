@@ -4540,10 +4540,12 @@ app.post('/api/instructor/choose-course', authenticateToken, requireInstructor, 
 app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (req, res) => {
     try {
         const { all } = req.query;
+        const userObjId = mongoose.isValidObjectId(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : null;
+        const idMatches = userObjId ? [userObjId, req.user.id] : [req.user.id];
         let query = {
             $or: [
-                { instructor_id: req.user.id },
-                { instructor_ids: req.user.id }
+                { instructor_id: { $in: idMatches } },
+                { instructor_ids: { $in: idMatches } }
             ]
         };
 
@@ -4563,7 +4565,7 @@ app.get('/api/instructor/courses', authenticateToken, requireInstructor, async (
         // Fetch SPECIFIC batches for this instructor to see THEIR assignment
         const myBatches = await Batch.find({
             course_id: { $in: courseIds },
-            instructor_id: req.user.id
+            instructor_id: { $in: idMatches }
         }).lean();
 
         // Map data
@@ -4609,7 +4611,8 @@ app.get('/api/instructor/courses/:id/batch/:batchType/students', authenticateTok
 
             // SECURITY: If instructor, only show students from their OWN assigned batches
             if (role === 'instructor') {
-                batchQuery.instructor_id = req.user.id;
+                const userObjId = mongoose.isValidObjectId(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : null;
+                batchQuery.instructor_id = userObjId ? { $in: [userObjId, req.user.id] } : req.user.id;
             }
 
             const batches = await Batch.find(batchQuery).select('_id').lean();
@@ -7120,9 +7123,11 @@ app.get('/api/courses/:courseId/roster', authenticateToken, requireInstructor, a
 
         // SECURITY: If instructor, first find WHICH students are in THEIR batches
         if (role === 'instructor') {
+            const userObjId = mongoose.isValidObjectId(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : null;
+            const idMatches = userObjId ? [userObjId, req.user.id] : [req.user.id];
             const myBatches = await Batch.find({
                 course_id: req.params.courseId,
-                instructor_id: req.user.id
+                instructor_id: { $in: idMatches }
             }).select('_id').lean();
 
             const myBatchIds = myBatches.map(b => b._id);
