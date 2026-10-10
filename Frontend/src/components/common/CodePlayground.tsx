@@ -336,7 +336,7 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
           if (isPrompt) {
             const enteredVal = inputValues[inputIdx++];
             xtermRef.current?.writeln(`${line} \x1b[1;36m${enteredVal}\x1b[0m`);
-          if (isError) {
+          } else if (isError) {
             xtermRef.current?.writeln(`\x1b[1;31m${line}\x1b[0m`);
             if (line.includes('EOFError')) {
               xtermRef.current?.writeln(`\x1b[1;33m[Hint: Your code called input() but stdin had no more data. Enter a value in the 'Enter Input' box below and click Send.]\x1b[0m`);
