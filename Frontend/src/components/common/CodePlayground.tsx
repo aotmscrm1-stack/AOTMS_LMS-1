@@ -133,7 +133,16 @@ export const SUPPORTED_LANGUAGES: LanguageDef[] = [
 ];
 
 export const detectSmartLanguage = (inputLang?: string, questionText?: string): string => {
-  // 1. Scan question text for explicit language mentions first
+  // 1. Try explicit input language FIRST if provided (Instructor's selection takes precedence)
+  if (inputLang) {
+    const clean = inputLang.toLowerCase().trim();
+    const found = SUPPORTED_LANGUAGES.find(
+      (l) => l.id === clean || l.aliases.includes(clean)
+    );
+    if (found) return found.id;
+  }
+
+  // 2. Scan question text for explicit language mentions if no explicit inputLang
   if (questionText) {
     const qLower = questionText.toLowerCase();
     if (qLower.includes('python')) return 'python';
@@ -152,15 +161,6 @@ export const detectSmartLanguage = (inputLang?: string, questionText?: string): 
     if (qLower.includes('javascript') || qLower.includes('js function')) return 'javascript';
   }
 
-  // 2. Try explicit input language if provided
-  if (inputLang) {
-    const clean = inputLang.toLowerCase().trim();
-    const found = SUPPORTED_LANGUAGES.find(
-      (l) => l.id === clean || l.aliases.includes(clean)
-    );
-    if (found) return found.id;
-  }
-
   return 'python';
 };
 
@@ -171,6 +171,7 @@ export const normalizeLanguageId = (input?: string): string => {
 interface CodePlaygroundProps {
   initialLanguage?: string;
   questionText?: string;
+  sampleInput?: string;
   value: string;
   onChange: (val: string | undefined) => void;
   output?: string;
@@ -183,6 +184,7 @@ interface CodePlaygroundProps {
 export const CodePlayground: React.FC<CodePlaygroundProps> = ({
   initialLanguage = 'python',
   questionText = '',
+  sampleInput = '',
   value,
   onChange,
   output = '',
@@ -196,7 +198,7 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
   );
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [terminalInput, setTerminalInput] = useState<string>('');
-  const [sessionStdin, setSessionStdin] = useState<string>('');
+  const [sessionStdin, setSessionStdin] = useState<string>(() => sampleInput || '');
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -232,6 +234,13 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
       onChange(langObj.defaultCode);
     }
   }, [initialLanguage, questionText]);
+
+  // Sync sessionStdin when question changes or sampleInput is provided
+  useEffect(() => {
+    if (sampleInput) {
+      setSessionStdin(sampleInput);
+    }
+  }, [sampleInput]);
 
   // Initialize xterm.js Terminal
   useEffect(() => {
@@ -327,8 +336,11 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
           if (isPrompt) {
             const enteredVal = inputValues[inputIdx++];
             xtermRef.current?.writeln(`${line} \x1b[1;36m${enteredVal}\x1b[0m`);
-          } else if (isError) {
+          if (isError) {
             xtermRef.current?.writeln(`\x1b[1;31m${line}\x1b[0m`);
+            if (line.includes('EOFError')) {
+              xtermRef.current?.writeln(`\x1b[1;33m[Hint: Your code called input() but stdin had no more data. Enter a value in the 'Enter Input' box below and click Send.]\x1b[0m`);
+            }
           } else if (isWarn) {
             xtermRef.current?.writeln(`\x1b[1;33m${line}\x1b[0m`);
           } else {
@@ -467,7 +479,8 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
             <Button
               size="sm"
               onClick={() => {
-                onRunCode(selectedLanguage, value, sessionStdin);
+                const effectiveStdin = sessionStdin || terminalInput || sampleInput || '';
+                onRunCode(selectedLanguage, value, effectiveStdin);
               }}
               disabled={isRunning || !value || !value.trim()}
               className="h-8 px-5 text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg hover:shadow-emerald-900/40 transition-all flex items-center gap-2"
@@ -533,9 +546,9 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
               <span className="text-xs font-bold text-slate-200 font-mono">
                 Terminal Output
               </span>
-              {sessionStdin && (
+              {sessionStdin ? (
                 <span className="text-[10px] text-cyan-400 font-mono bg-cyan-950/70 border border-cyan-800/60 px-1.5 py-0.5 rounded flex items-center gap-1">
-                  Inputs: {sessionStdin.split('\n').join(', ')}
+                  Stdin: {sessionStdin.split('\n').join(', ')}
                   <button
                     type="button"
                     onClick={() => {
@@ -548,7 +561,11 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
                     ×
                   </button>
                 </span>
-              )}
+              ) : sampleInput ? (
+                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-950/70 border border-emerald-800/60 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  Default Stdin: {sampleInput.split('\n').join(', ')}
+                </span>
+              ) : null}
             </div>
 
             <div className="flex items-center gap-2">
@@ -580,7 +597,7 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
                   handleSendInput(terminalInput);
                 }
               }}
-              placeholder="Type program input value here and press Enter (e.g. 1, 4)..."
+              placeholder={sampleInput ? `Type input (Default: ${sampleInput.replace(/\n/g, ' ')})...` : "Type program input value here and press Enter (e.g. 85)..."}
               className="flex-1 bg-slate-900/90 border border-slate-700/80 rounded px-2.5 py-1 text-cyan-300 font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 transition-colors"
             />
             <Button
@@ -592,21 +609,22 @@ export const CodePlayground: React.FC<CodePlaygroundProps> = ({
             >
               Send ↵
             </Button>
-            {sessionStdin && (
+            {(sessionStdin || sampleInput) && (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => {
                   setSessionStdin('');
+                  setTerminalInput('');
                   if (onRunCode) {
                     onRunCode(selectedLanguage, value, '');
                   }
                 }}
-                title="Reset Input & Re-run"
+                title="Reset Input & Re-run with blank stdin"
                 className="h-7 px-2 text-[10px] text-slate-400 hover:text-red-400 font-mono"
               >
-                Reset
+                Clear
               </Button>
             )}
           </div>

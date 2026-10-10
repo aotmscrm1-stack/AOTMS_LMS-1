@@ -228,6 +228,9 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
     setIsRunning(true);
     setConsoleOutput(prev => ({ ...prev, [currentQuestion.id]: 'Running...' }));
 
+    const defaultStdin = currentQuestion?.sample_input || (currentQuestion?.test_cases && currentQuestion.test_cases[0]?.input) || '';
+    const effectiveStdin = (customStdin !== undefined && customStdin !== '') ? customStdin : defaultStdin;
+
     try {
       const res = await fetchWithAuth<{
         run?: { stdout?: string; stderr?: string; output?: string; status?: string };
@@ -238,7 +241,7 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
           language: language, 
           version: '*',
           files: [{ content: code }],
-          stdin: customStdin || ''
+          stdin: effectiveStdin || ''
         })
       });
 
@@ -649,6 +652,7 @@ export function ExamSession({ examId, examTitle, durationMinutes, scheduledDate,
                 className="h-full flex-1 rounded-none border-none shadow-none"
                 initialLanguage={currentQuestion?.language || 'python'}
                 questionText={currentQuestion?.question_text || currentQuestion?.text || ''}
+                sampleInput={currentQuestion?.sample_input || (currentQuestion?.test_cases && currentQuestion.test_cases[0]?.input) || ''}
                 value={answers[currentQuestion?.id as string] || ''}
                 onChange={(val) => handleAnswerChange(val || '')}
                 output={consoleOutput[currentQuestion?.id as string]}
