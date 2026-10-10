@@ -886,11 +886,127 @@ Do not include any Markdown wrapper like \`\`\`json or text explanation around t
 const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY;
 const JUDGE0_HOST = process.env.JUDGE0_HOST || 'judge0-extra-ce.p.rapidapi.com';
 
+// Output normalization for reliable test case comparison
+const normalizeOutput = (str) => {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/\r\n/g, '\n') // Normalize CRLF to LF
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map(line => line.trimEnd()) // Trim trailing whitespace on each line
+        .join('\n')
+        .trim(); // Trim leading/trailing blank lines
+};
+
+// 1. Secure Isolated JavaScript Runner (Child Process + Secret-Stripped Environment)
+const executeSecureJavaScript = (sourceCode, stdin = '') => {
+    return new Promise((resolve) => {
+        const nodeCmd = process.platform === 'win32' ? 'node' : 'node';
+
+        // Wrapped script provides standard polyfills for competitive coding (readline / input / fs stdin)
+        const wrappedScript = `
+const fs = require('fs');
+let _stdinBuffer = '';
+try {
+    _stdinBuffer = fs.readFileSync(0, 'utf-8');
+} catch (e) {
+    _stdinBuffer = '';
+}
+const _stdinLines = _stdinBuffer.split(/\\r?\\n/);
+let _stdinIdx = 0;
+global.readline = () => (_stdinIdx < _stdinLines.length ? _stdinLines[_stdinIdx++] : '');
+global.input = global.readline;
+
+// Execute student code in isolated sandbox
+try {
+    ${sourceCode}
+} catch (err) {
+    console.error(err && err.stack ? err.stack : String(err));
+    process.exit(1);
+}
+`;
+
+        const proc = require('child_process').spawn(nodeCmd, ['-e', wrappedScript], {
+            timeout: 4000,
+            env: {
+                PATH: process.env.PATH || '',
+                SYSTEMROOT: process.env.SYSTEMROOT || '',
+                TEMP: process.env.TEMP || '',
+                TMP: process.env.TMP || '',
+                NODE_ENV: 'production'
+            }
+        });
+
+        let stdout = '';
+        let stderr = '';
+        let killedDueToLimit = false;
+        const MAX_OUTPUT = 256 * 1024; // 256 KB max buffer limit
+
+        proc.stdout.on('data', (d) => {
+            if (stdout.length < MAX_OUTPUT) {
+                stdout += d.toString();
+            } else if (!killedDueToLimit) {
+                killedDueToLimit = true;
+                proc.kill('SIGKILL');
+            }
+        });
+
+        proc.stderr.on('data', (d) => {
+            if (stderr.length < MAX_OUTPUT) {
+                stderr += d.toString();
+            }
+        });
+
+        proc.on('error', (err) => {
+            resolve({
+                run: {
+                    stdout: '',
+                    stderr: `Execution launch failed: ${err.message}`,
+                    code: 1,
+                    output: err.message
+                },
+                language: 'javascript'
+            });
+        });
+
+        proc.on('close', (code, signal) => {
+            if (signal === 'SIGTERM' || signal === 'SIGKILL' || proc.killed) {
+                stderr = stderr || 'Time Limit Exceeded (4000ms) or Output Limit Exceeded';
+            }
+            resolve({
+                run: {
+                    stdout: stdout,
+                    stderr: stderr,
+                    code: code !== null ? code : 1,
+                    output: stdout || stderr
+                },
+                language: 'javascript'
+            });
+        });
+
+        if (stdin) {
+            const formattedStdin = stdin.endsWith('\n') ? stdin : stdin + '\n';
+            try {
+                proc.stdin.write(formattedStdin);
+            } catch (e) {}
+        }
+        try {
+            proc.stdin.end();
+        } catch (e) {}
+    });
+};
+
 const executeNativePython = (sourceCode, stdin = '') => {
     return new Promise((resolve) => {
         const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
         const proc = require('child_process').spawn(pythonCmd, ['-c', sourceCode], {
-            timeout: 5000
+            timeout: 5000,
+            env: {
+                PATH: process.env.PATH || '',
+                SYSTEMROOT: process.env.SYSTEMROOT || '',
+                TEMP: process.env.TEMP || '',
+                TMP: process.env.TMP || ''
+            }
         });
 
         let stdout = '';
@@ -923,43 +1039,97 @@ const executeNativePython = (sourceCode, stdin = '') => {
     });
 };
 
+// Test Case Evaluation Engine with Proportional Scoring
+const evaluateCodeAgainstTestCases = async (language, sourceCode, testCases = [], questionMaxMarks = 1) => {
+    let casesToRun = Array.isArray(testCases) && testCases.length > 0 ? [...testCases] : [];
+
+    if (casesToRun.length === 0) {
+        casesToRun = [{ input: '', expected_output: '', is_hidden: false, weight: 1 }];
+    }
+
+    const results = [];
+    let passedWeight = 0;
+    let totalWeight = 0;
+
+    for (let i = 0; i < casesToRun.length; i++) {
+        const tc = casesToRun[i];
+        const tcWeight = Number(tc.weight) > 0 ? Number(tc.weight) : 1;
+        totalWeight += tcWeight;
+
+        const inputStr = tc.input !== undefined && tc.input !== null ? String(tc.input) : '';
+        const expectedNormalized = normalizeOutput(tc.expected_output);
+
+        try {
+            const execResult = await executeCode(language, sourceCode, inputStr);
+            const rawStdout = execResult.run?.stdout || '';
+            const rawStderr = execResult.run?.stderr || '';
+            const actualNormalized = normalizeOutput(rawStdout);
+            const isError = execResult.run?.code !== 0 && rawStderr.length > 0;
+            const isTimeout = rawStderr.toLowerCase().includes('time limit') || rawStderr.toLowerCase().includes('timeout');
+
+            let passed = false;
+            let status = 'WRONG_ANSWER';
+
+            if (isTimeout) {
+                status = 'TIME_LIMIT_EXCEEDED';
+            } else if (isError) {
+                status = 'RUNTIME_ERROR';
+            } else if (expectedNormalized === '' && actualNormalized !== '') {
+                passed = true;
+                status = 'PASSED';
+            } else if (actualNormalized === expectedNormalized) {
+                passed = true;
+                status = 'PASSED';
+            }
+
+            if (passed) {
+                passedWeight += tcWeight;
+            }
+
+            results.push({
+                test_case_index: i + 1,
+                is_hidden: !!tc.is_hidden,
+                passed,
+                status,
+                weight: tcWeight,
+                input: tc.is_hidden ? undefined : inputStr,
+                expected_output: tc.is_hidden ? undefined : tc.expected_output,
+                actual_output: tc.is_hidden ? (passed ? 'Passed' : 'Hidden Test Case Failed') : (rawStdout.slice(0, 1000) || '(No Output)'),
+                error: tc.is_hidden ? (passed ? undefined : 'Execution error on hidden test case') : (rawStderr.slice(0, 1000) || undefined),
+                explanation: tc.is_hidden ? undefined : tc.explanation
+            });
+        } catch (err) {
+            results.push({
+                test_case_index: i + 1,
+                is_hidden: !!tc.is_hidden,
+                passed: false,
+                status: 'EVALUATION_ERROR',
+                weight: tcWeight,
+                error: err.message
+            });
+        }
+    }
+
+    const maxMarks = Number(questionMaxMarks) > 0 ? Number(questionMaxMarks) : 1;
+    const earnedMarks = totalWeight > 0 ? Math.round((passedWeight / totalWeight) * maxMarks * 100) / 100 : 0;
+    const isAllPassed = results.length > 0 && results.every(r => r.passed);
+
+    return {
+        isCorrect: isAllPassed,
+        earned_marks: earnedMarks,
+        max_marks: maxMarks,
+        total_test_cases: results.length,
+        passed_test_cases: results.filter(r => r.passed).length,
+        test_case_results: results
+    };
+};
+
 const executeCode = async (language, sourceCode, stdin = '') => {
     const lang = language?.toLowerCase()?.trim() || 'javascript';
 
-    // 1. Local JavaScript Execution (Safe Node.js VM Sandbox)
+    // 1. Local Secure Isolated JavaScript Execution
     if (lang === 'javascript' || lang === 'js' || lang === 'node') {
-        return new Promise((resolve) => {
-            const outputBuffer = [];
-            const errorBuffer = [];
-            const sandbox = {
-                console: {
-                    log: (...args) => outputBuffer.push(args.map(a => String(a)).join(' ')),
-                    error: (...args) => errorBuffer.push(args.map(a => String(a)).join(' ')),
-                    warn: (...args) => outputBuffer.push('[WARN] ' + args.map(a => String(a)).join(' '))
-                },
-                setTimeout, clearTimeout, setInterval, clearInterval,
-                process: { exit: (code) => { throw new Error(`Process exited with code ${code}`); } }
-            };
-            try {
-                const script = new vm.Script(sourceCode);
-                const context = vm.createContext(sandbox);
-                script.runInContext(context, { timeout: 3000 });
-                resolve({
-                    run: {
-                        stdout: outputBuffer.join('\n'),
-                        stderr: errorBuffer.join('\n'),
-                        code: 0,
-                        output: outputBuffer.join('\n')
-                    },
-                    language: 'javascript'
-                });
-            } catch (err) {
-                resolve({
-                    run: { stdout: '', stderr: err.message, code: 1, output: err.message },
-                    language: 'javascript'
-                });
-            }
-        });
+        return await executeSecureJavaScript(sourceCode, stdin);
     }
 
     // 2. Ultra-Fast Native Python Execution (Docker Container & Local)
@@ -5602,8 +5772,25 @@ app.get('/api/student/exam-questions/:id', authenticateToken, async (req, res) =
         const data = questions.map(q => ({
             id: q._id,
             text: q.question_text,
+            question_text: q.question_text,
             type: q.type,
-            options: q.options.map(opt => ({ id: opt._id || Math.random(), text: opt.text })),
+            language: q.language || 'javascript',
+            input_format: q.input_format,
+            output_format: q.output_format,
+            constraints: q.constraints,
+            sample_input: q.sample_input,
+            sample_output: q.sample_output,
+            explanation: q.explanation,
+            // Include ONLY public test cases (Hidden test cases are strictly filtered out on backend!)
+            test_cases: (q.test_cases || [])
+                .filter(tc => !tc.is_hidden)
+                .map(tc => ({
+                    input: tc.input || '',
+                    expected_output: tc.expected_output || '',
+                    explanation: tc.explanation || '',
+                    is_hidden: false
+                })),
+            options: (q.options || []).map(opt => ({ id: opt._id || Math.random(), text: opt.text })),
             // Do NOT send is_correct to frontend during exam
             marks: q.marks || 1
         }));
@@ -6032,22 +6219,23 @@ app.post('/api/student/submit-exam', authenticateToken, async (req, res) => {
         let score = 0;
         let correctCount = 0;
         let wrongCount = 0;
-        const qIds = Object.keys(answers);
+        const qIds = Object.keys(answers || {});
         const questions = await QuestionBank.find({ _id: { $in: qIds } }).lean();
 
         let hasSubjective = false;
-        // Use for...of loop to allow await for async operations (grading coding questions)
+        const evalMap = {};
+        const correctQIds = new Set();
+
+        // Use for...of loop to allow await for async operations (grading coding questions against test cases)
         for (const q of questions) {
             const studentAns = answers[q._id.toString()];
             if (!studentAns) continue; // Skip if not answered
 
             let isCorrect = false;
-
-            // Normalize question type
             const type = q.type || 'multiple_choice';
 
-            // Check if this exam needs manual review
-            if (['short', 'long', 'subjective', 'short_answer', 'long_answer', 'coding'].includes(type)) {
+            // Check if this exam needs manual review (Only written text responses like short/long essay)
+            if (['short', 'long', 'subjective', 'short_answer', 'long_answer'].includes(type)) {
                 hasSubjective = true;
             }
 
@@ -6056,78 +6244,79 @@ app.post('/api/student/submit-exam', authenticateToken, async (req, res) => {
                 if (correctOpt) {
                     const correctId = correctOpt._id?.toString();
                     const correctText = correctOpt.text;
-                    // Check ID match OR exact text match
                     if (studentAns === correctId || studentAns === correctText) {
                         isCorrect = true;
                     }
                 }
             }
             else if (type === 'true_false') {
-                // Compare case-insensitive "true"/"false"
                 const correctVal = String(q.correct_answer || q.options.find(o => o.is_correct)?.text).toLowerCase();
                 if (String(studentAns).toLowerCase() === correctVal) {
                     isCorrect = true;
                 }
             }
             else if (type === 'fill_blank') {
-                // Compare trimmed, case-insensitive
                 const correctVal = String(q.correct_answer || q.options.find(o => o.is_correct)?.text).trim().toLowerCase();
                 if (String(studentAns).trim().toLowerCase() === correctVal) {
                     isCorrect = true;
                 }
             }
-            else if (type === 'coding') {
-                // AUTO-GRADING FOR CODING
-                // Strategy: Compare the OUTPUT of the student's code with the OUTPUT of the correct_answer (Solution Code).
-                // This allows flexibility in how the student writes code, as long as the output matches.
+            else if (type === 'coding' || type === 'practical') {
+                // AUTOMATIC TEST-CASE EVALUATION FOR CODING QUESTIONS
+                const questionMaxMarks = Number(q.marks) > 0 ? Number(q.marks) : 1;
+                const lang = q.language || 'javascript';
 
                 try {
-                    // 1. Execute Student Code
-                    const studentResult = await executeCode('javascript', studentAns);
-                    const studentOutput = studentResult.run ? studentResult.run.stdout.trim() : '';
+                    const codingEvaluation = await evaluateCodeAgainstTestCases(
+                        lang,
+                        studentAns,
+                        q.test_cases || [],
+                        questionMaxMarks
+                    );
 
-                    // 2. Execute Solution Code (stored in correct_answer)
-                    // If correct_answer is just plain text (not code), this might fail or print nothing, 
-                    // so we treat it as the expected output itself if execution produces no output/error? 
-                    // No, safer to assume it IS code.
-                    const solutionResult = await executeCode('javascript', q.correct_answer || '');
-                    const expectedOutput = solutionResult.run ? solutionResult.run.stdout.trim() : '';
+                    evalMap[q._id.toString()] = codingEvaluation;
+                    const earned = Number(codingEvaluation.earned_marks) || 0;
+                    score += earned;
 
-                    // 3. Compare Outputs
-                    if (studentOutput === expectedOutput && expectedOutput !== '') {
+                    if (codingEvaluation.isCorrect) {
                         isCorrect = true;
-                    } else if (expectedOutput === '' && studentOutput === '') {
-                        // If both produce no output, is it correct? Maybe.
-                        // But usually we expect some output.
-                        // Fallback: exact string match of code if output is empty
-                        if (String(studentAns).trim() === String(q.correct_answer).trim()) {
-                            isCorrect = true;
-                        }
+                        correctQIds.add(q._id.toString());
+                        correctCount++;
+                    } else if (earned > 0) {
+                        // Partial credit awarded
+                        correctCount += Math.round((earned / questionMaxMarks) * 100) / 100;
+                    } else {
+                        wrongCount++;
                     }
-                } catch (e) {
-                    console.error(`Error grading coding question ${q._id}:`, e);
+                } catch (codeErr) {
+                    console.error(`Error auto-evaluating coding question ${q._id}:`, codeErr);
+                    wrongCount++;
                 }
+                continue; // Coding score already accumulated proportionally
             }
-            else if (type === 'short' || type === 'long' || type === 'short_answer' || type === 'long_answer') {
-                // Logic: If there is a strict answer key, try to match it.
-                // Otherwise, we might mark it as 0 (pending review).
-                // For MVP, we'll leave it as 0 but ensure it's recorded.
+            else if (['short', 'long', 'short_answer', 'long_answer'].includes(type)) {
                 if (q.correct_answer && String(studentAns).trim() === String(q.correct_answer).trim()) {
                     isCorrect = true;
                 }
             }
 
             if (isCorrect) {
-                score += q.marks || 1;
+                score += Number(q.marks) || 1;
                 correctCount++;
+                correctQIds.add(q._id.toString());
             } else {
                 wrongCount++;
             }
         }
 
-        const percentage = totalQuestions > 0 ? (score / totalQuestions) * 100 : 0;
+        // Proportional total percentage calculation based on total possible marks
+        const totalPossibleMarks = questions.reduce((sum, q) => sum + (Number(q.marks) || 1), 0);
+        score = Math.round(score * 100) / 100;
+        const percentage = totalPossibleMarks > 0
+            ? Math.min(100, Math.round((score / totalPossibleMarks) * 100))
+            : 0;
 
-        // Resolve title and snapshot for easy viewing/grading
+        // Resolve title and course link
         let resolvedCourseId = null;
         let finalTitle = examId.startsWith('qb_') ? examId.replace('qb_', '') : "Mock Test";
 
@@ -6149,26 +6338,36 @@ app.post('/api/student/submit-exam', authenticateToken, async (req, res) => {
             resolvedCourseId = questions.find(q => q.course_id)?.course_id;
         }
 
-        // Build snapshot
-        const questions_snapshot = questions.map(q => ({
-            question_id: q._id,
-            question_text: q.question_text,
-            type: q.type,
-            correct_answer: q.correct_answer || (q.options ? q.options.find(o => o.is_correct)?.text : ""),
-            marks: q.marks || 1,
-            student_answer: answers[q._id.toString()] || ""
-        }));
+        // Build snapshot with test-case execution telemetry
+        const questions_snapshot = questions.map(q => {
+            const sAns = answers[q._id.toString()] || "";
+            const codingEval = evalMap[q._id.toString()];
+            const earnedMarks = codingEval !== undefined
+                ? codingEval.earned_marks
+                : (correctQIds.has(q._id.toString()) ? (Number(q.marks) || 1) : 0);
+
+            return {
+                question_id: q._id,
+                question_text: q.question_text,
+                type: q.type,
+                correct_answer: q.correct_answer || (q.options ? q.options.find(o => o.is_correct)?.text : ""),
+                marks: Number(q.marks) || 1,
+                earned_marks: earnedMarks,
+                student_answer: sAns,
+                coding_evaluation: codingEval || null
+            };
+        });
 
         const result = await ExamResult.create({
             student_id: req.user.id,
             exam_id: examId.startsWith('qb_') ? null : examId,
-            mock_paper_id: examId.startsWith('qb_') ? null : examId, // Alias for now
+            mock_paper_id: examId.startsWith('qb_') ? null : examId,
             course_id: resolvedCourseId,
             test_title: finalTitle,
             questions_snapshot,
             objective_score: score,
             score,
-            total_questions: totalQuestions,
+            total_questions: totalQuestions || questions.length,
             percentage,
             answers,
             grading_status: hasSubjective ? 'pending' : 'graded',
@@ -6512,10 +6711,18 @@ app.get('/api/student/exam-review/:resultId', authenticateToken, async (req, res
                 } else {
                     isCorrect = null; // Pending
                 }
-            } else if (q.type === 'coding') {
-                if (String(studentAns).trim() === String(q.correct_answer).trim()) isCorrect = true;
-                else isCorrect = null; // Unknown/Review
+            } else if (q.type === 'coding' || q.type === 'practical') {
+                const snap = (result.questions_snapshot || []).find(s => s.question_id?.toString() === q._id.toString());
+                if (snap && snap.coding_evaluation) {
+                    isCorrect = snap.coding_evaluation.isCorrect;
+                } else if (String(studentAns).trim() === String(q.correct_answer).trim()) {
+                    isCorrect = true;
+                } else {
+                    isCorrect = false;
+                }
             }
+
+            const snap = (result.questions_snapshot || []).find(s => s.question_id?.toString() === q._id.toString());
 
             return {
                 id: q._id,
@@ -6530,7 +6737,9 @@ app.get('/api/student/exam-review/:resultId', authenticateToken, async (req, res
                 studentAnswerId: studentAns,
                 is_correct: isCorrect,
                 manual_grade: manualGrade,
-                marks: q.marks || 1
+                marks: q.marks || 1,
+                earned_marks: snap?.earned_marks !== undefined ? snap.earned_marks : (isCorrect ? (q.marks || 1) : 0),
+                coding_evaluation: snap?.coding_evaluation || null
             };
         });
 

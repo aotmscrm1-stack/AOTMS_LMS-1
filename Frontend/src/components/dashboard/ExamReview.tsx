@@ -49,6 +49,23 @@ interface ReviewResult {
         studentAnswerId: string | null;
         is_correct: boolean | null;
         marks: number;
+        earned_marks?: number;
+        coding_evaluation?: {
+            isCorrect: boolean;
+            earned_marks: number;
+            max_marks: number;
+            total_test_cases: number;
+            passed_test_cases: number;
+            test_case_results?: Array<{
+                test_case_index: number;
+                is_hidden: boolean;
+                passed: boolean;
+                status: string;
+                actual_output?: string;
+                error?: string;
+                explanation?: string;
+            }>;
+        };
         correct_answer?: string;
         manual_grade?: {
           marks: number;
@@ -356,6 +373,44 @@ export function ExamReview({ resultId, onClose }: ExamReviewProps) {
                                                     </div>
                                                 )}
                                             </div>
+
+                                            {/* Automatic Coding Evaluation Test Cases Telemetry */}
+                                            {q.type === 'coding' && q.coding_evaluation && (
+                                                <div className="space-y-2.5 p-4 rounded-2xl bg-slate-900 border border-slate-800">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <Award className="h-4 w-4 text-emerald-400" />
+                                                            <span className="text-xs font-bold text-slate-200">
+                                                                Test Cases: {q.coding_evaluation.passed_test_cases} / {q.coding_evaluation.total_test_cases} Passed
+                                                            </span>
+                                                        </div>
+                                                        <Badge variant="outline" className={`text-[10px] font-bold font-mono ${q.coding_evaluation.isCorrect ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/30"}`}>
+                                                            {q.earned_marks !== undefined ? q.earned_marks : q.coding_evaluation.earned_marks} / {q.marks} Marks
+                                                        </Badge>
+                                                    </div>
+                                                    {q.coding_evaluation.test_case_results && (
+                                                        <div className="space-y-1.5 pt-1">
+                                                            {q.coding_evaluation.test_case_results.map((tcr, tIdx) => (
+                                                                <div key={tIdx} className="flex items-center justify-between p-2 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] font-mono">
+                                                                    <div className="flex items-center gap-2">
+                                                                        {tcr.passed ? (
+                                                                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                                                                        ) : (
+                                                                            <XCircle className="h-3.5 w-3.5 text-rose-400" />
+                                                                        )}
+                                                                        <span className="text-slate-300">
+                                                                            Test Case #{tcr.test_case_index} {tcr.is_hidden ? '(Hidden Evaluation)' : '(Sample)'}
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className={`font-bold text-[10px] ${tcr.passed ? "text-emerald-400" : "text-rose-400"}`}>
+                                                                        {tcr.status}
+                                                                    </span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
 
                                             {/* Manual Feedback from Instructor for this specific question */}
                                             {q.manual_grade?.feedback && (

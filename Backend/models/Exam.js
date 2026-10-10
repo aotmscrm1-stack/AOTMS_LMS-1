@@ -58,6 +58,7 @@ const QuestionBankSchema = new Schema({
         input: { type: String },
         expected_output: { type: String },
         explanation: { type: String },
+        weight: { type: Number, default: 1 },
         is_hidden: { type: Boolean, default: false }
     }],
     marks: { type: Number, default: 1 },
@@ -95,7 +96,9 @@ const ExamResultSchema = new Schema({
         type: { type: String },
         correct_answer: { type: String },
         marks: { type: Number },
-        student_answer: { type: String }
+        earned_marks: { type: Number, default: 0 },
+        student_answer: { type: String },
+        coding_evaluation: { type: Schema.Types.Mixed }
     }, { _id: false })],
     objective_score: { type: Number, default: 0 },
     score: { type: Number, required: true },
