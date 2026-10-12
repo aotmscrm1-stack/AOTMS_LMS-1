@@ -1,3 +1,5 @@
+name: aotms_lms
+
 services:
   # Backend Node.js service (Scalable)
   backend:

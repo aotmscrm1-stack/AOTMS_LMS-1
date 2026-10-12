@@ -11,7 +11,7 @@ on:
 
 concurrency:
   group: deploy-vps
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -35,11 +35,20 @@ jobs:
             sudo systemctl stop pm2-ubuntu 2>/dev/null || true
             sudo systemctl stop pm2 2>/dev/null || true
             pm2 kill 2>/dev/null || npx pm2 kill 2>/dev/null || true
+            
+            # Kill any stale or hanging docker compose commands on host
+            pkill -9 -f "docker compose" 2>/dev/null || true
+            pkill -9 -f "docker-compose" 2>/dev/null || true
             docker stop $(docker ps -q --filter "publish=5000") 2>/dev/null || true
             fuser -k -9 5000/tcp 2>/dev/null || true
+            
             cd /root/AOTMS_LMS || cd ~/AOTMS_LMS || cd /root/AOTMS_LMS-1 || true
             git reset --hard HEAD
             git pull origin main
-            docker compose down --remove-orphans || true
-            docker rm -f $(docker ps -a -q --filter "name=aotms_lms") 2>/dev/null || true
+            
+            # Cleanly teardown and force-remove all existing containers to avoid name collisions
+            docker compose down --remove-orphans --volumes 2>/dev/null || true
+            docker rm -f aotms_lms-backend-1 aotms_lms-backend-2 aotms_lms-backend-3 aotms_lms-backend-4 aotms_lms-nginx-1 2>/dev/null || true
+            for c in $(docker ps -a -q --filter "name=aotms_lms"); do docker rm -f "$c" 2>/dev/null || true; done
+            
             docker compose up --build -d --remove-orphans --force-recreate
