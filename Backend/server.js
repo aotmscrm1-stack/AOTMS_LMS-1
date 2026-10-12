@@ -1586,6 +1586,8 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
         const salt = await bcrypt.genSalt(12);
         user.password_hash = await bcrypt.hash(new_password, salt);
+        user.password = user.password_hash;
+        user.failed_login_attempts = 0;
         await user.save();
 
         resetOtpStore.delete(email.toLowerCase().trim());

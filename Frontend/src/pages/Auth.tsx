@@ -378,6 +378,18 @@ export default function Auth() {
       toast({ title: "Too Short", description: "Password must be at least 8 characters.", variant: "destructive" });
       return;
     }
+    const hasUpper = /[A-Z]/.test(forgotNewPassword);
+    const hasLower = /[a-z]/.test(forgotNewPassword);
+    const hasNumber = /[0-9]/.test(forgotNewPassword);
+    const hasSpecial = /[^A-Za-z0-9]/.test(forgotNewPassword);
+    if (!hasUpper || !hasLower || !hasNumber || !hasSpecial) {
+      toast({
+        title: "Weak Password",
+        description: "Password must contain uppercase, lowercase, a number, and a special character.",
+        variant: "destructive"
+      });
+      return;
+    }
     if (forgotNewPassword !== forgotConfirmPassword) {
       toast({ title: "Mismatch", description: "Passwords don't match.", variant: "destructive" });
       return;
@@ -939,6 +951,9 @@ export default function Auth() {
                       />
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
                     </div>
+                    <p className="text-[11px] text-slate-500 font-medium px-1">
+                      Password must be at least 8 characters and contain uppercase, lowercase, a number, and a special character.
+                    </p>
                     {forgotNewPassword && forgotConfirmPassword && forgotNewPassword !== forgotConfirmPassword && (
                       <p className="text-xs text-red-500 font-medium ml-1">Passwords don't match</p>
                     )}
