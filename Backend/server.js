@@ -1484,19 +1484,20 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
     res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// ── Forgot Password Routes ─────────────────────────────────────────────────
-// In-memory OTP store: { email -> { otp, expiresAt } }
-const resetOtpStore = new Map();
+// ── Forgot Password Routes (MongoDB-backed for multi-replica Docker scaling) ───────
 
-// Step 1: Generate OTP, send via n8n, store for verification
+// Step 1: Generate OTP, send via n8n, store in MongoDB
 app.post('/api/auth/forgot-password', async (req, res) => {
     try {
         const { email } = req.body;
         if (!email) return res.status(400).json({ error: 'Email is required' });
 
-        const existingRecord = resetOtpStore.get(email.toLowerCase().trim());
+        const cleanEmail = email.toLowerCase().trim();
+
+        // Rate limit: check if an OTP was created in the last 60 seconds
+        const existingRecord = await OTP.findOne({ email: cleanEmail });
         if (existingRecord) {
-            const timePassed = Date.now() - existingRecord.createdAt;
+            const timePassed = Date.now() - new Date(existingRecord.created_at).getTime();
             if (timePassed < 60 * 1000) {
                 const waitSeconds = Math.ceil((60 * 1000 - timePassed) / 1000);
                 return res.status(429).json({ error: `Please wait ${waitSeconds} seconds before requesting another OTP.` });
@@ -1504,68 +1505,89 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         }
 
         // Check user exists case-insensitively
-        const user = await User.findOne({ email: { $regex: new RegExp("^" + email.trim() + "$", "i") } });
+        const user = await User.findOne({ email: { $regex: new RegExp("^" + cleanEmail + "$", "i") } });
         if (!user) return res.status(404).json({ error: 'No account found with this email.' });
 
         // Generate random 6-digit OTP
         const otp = String(Math.floor(100000 + Math.random() * 900000));
-        const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+        const expires_at = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-        // Store OTP (store as lowercase email in key for consistency)
-        resetOtpStore.set(email.toLowerCase().trim(), { otp, expiresAt, failedAttempts: 0, createdAt: Date.now() });
-        setTimeout(() => resetOtpStore.delete(email.toLowerCase().trim()), 5 * 60 * 1000);
+        // Upsert into MongoDB so all backend replicas share the exact same OTP record
+        await OTP.findOneAndUpdate(
+            { email: cleanEmail },
+            {
+                email: cleanEmail,
+                otp,
+                full_name: user.full_name || 'User',
+                expires_at,
+                failed_attempts: 0,
+                verified: false,
+                created_at: new Date()
+            },
+            { upsert: true, new: true }
+        );
 
-        // Call n8n webhook — it emails/calls the OTP to the user
+        // Call n8n webhook — emails/calls the OTP to the user
         await triggerOtpWebhook({
-            email: email.toLowerCase().trim(),
+            email: cleanEmail,
             full_name: user.full_name || 'User',
             otp,
             phone: user.phone || '',
             type: 'forgot_password'
         });
 
-        console.log(`[ForgotPassword] OTP ${otp} generated for ${email}`);
+        console.log(`[ForgotPassword] OTP ${otp} generated and saved to MongoDB for ${cleanEmail}`);
         res.json({ success: true, message: 'OTP sent to your email.' });
     } catch (err) {
         handleError(res, err, 'forgot-password');
     }
 });
 
-// Step 2: Verify OTP entered by user
+// Step 2: Verify OTP entered by user (Shared via MongoDB)
 app.post('/api/auth/verify-reset-otp', async (req, res) => {
     try {
         const { email, otp } = req.body;
         if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
 
-        const record = resetOtpStore.get(email.toLowerCase().trim());
-        if (!record) return res.status(400).json({ error: 'OTP expired or not found. Request a new one.' });
-        if (Date.now() > record.expiresAt) {
-            resetOtpStore.delete(email.toLowerCase().trim());
-            return res.status(400).json({ error: 'OTP has expired. Request a new one.' });
+        const cleanEmail = email.toLowerCase().trim();
+        const cleanOtp = String(otp).trim();
+
+        const record = await OTP.findOne({ email: cleanEmail });
+        if (!record) {
+            return res.status(400).json({ error: 'OTP expired or not found. Please request a new one.' });
         }
-        if (record.failedAttempts >= 5) {
-            resetOtpStore.delete(email.toLowerCase().trim());
+        if (Date.now() > new Date(record.expires_at).getTime()) {
+            await OTP.deleteOne({ _id: record._id });
+            return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
+        }
+        if (record.failed_attempts >= 5) {
+            await OTP.deleteOne({ _id: record._id });
             return res.status(400).json({ error: 'Too many failed attempts. OTP has been invalidated. Please request a new one.' });
         }
 
-        if (String(otp).trim() !== record.otp) {
-            record.failedAttempts = (record.failedAttempts || 0) + 1;
-            const remaining = 5 - record.failedAttempts;
+        if (cleanOtp !== String(record.otp).trim()) {
+            record.failed_attempts = (record.failed_attempts || 0) + 1;
+            await record.save();
+            const remaining = 5 - record.failed_attempts;
             if (remaining <= 0) {
-                resetOtpStore.delete(email.toLowerCase().trim());
+                await OTP.deleteOne({ _id: record._id });
                 return res.status(400).json({ error: 'Too many failed attempts. OTP has been invalidated. Please request a new one.' });
             }
             return res.status(400).json({ error: `Invalid OTP. You have ${remaining} attempts remaining.` });
         }
 
-        console.log(`[ForgotPassword] OTP verified for ${email}`);
-        res.json({ success: true, message: 'OTP verified' });
+        // Mark verified in MongoDB
+        record.verified = true;
+        await record.save();
+
+        console.log(`[ForgotPassword] OTP verified in MongoDB for ${cleanEmail}`);
+        res.json({ success: true, message: 'OTP verified successfully' });
     } catch (err) {
         handleError(res, err, 'verify-reset-otp');
     }
 });
 
-// Step 3: Reset password after OTP verified
+// Step 3: Reset password after OTP verified (Shared via MongoDB)
 app.post('/api/auth/reset-password', async (req, res) => {
     try {
         const { email, otp, new_password } = req.body;
@@ -1574,14 +1596,17 @@ app.post('/api/auth/reset-password', async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 8 characters, and contain mixed case, numbers, and special characters.' });
         }
 
-        // Re-verify OTP for security
-        const record = resetOtpStore.get(email.toLowerCase().trim());
-        if (!record || Date.now() > record.expiresAt || String(otp).trim() !== record.otp) {
+        const cleanEmail = email.toLowerCase().trim();
+        const cleanOtp = String(otp).trim();
+
+        // Check OTP in MongoDB
+        const record = await OTP.findOne({ email: cleanEmail });
+        if (!record || Date.now() > new Date(record.expires_at).getTime() || cleanOtp !== String(record.otp).trim()) {
             return res.status(400).json({ error: 'OTP invalid or expired. Please restart the reset process.' });
         }
 
         // Find user case-insensitively
-        const user = await User.findOne({ email: { $regex: new RegExp("^" + email.trim() + "$", "i") } });
+        const user = await User.findOne({ email: { $regex: new RegExp("^" + cleanEmail + "$", "i") } });
         if (!user) return res.status(404).json({ error: 'No account found with this email.' });
 
         const salt = await bcrypt.genSalt(12);
@@ -1590,8 +1615,9 @@ app.post('/api/auth/reset-password', async (req, res) => {
         user.failed_login_attempts = 0;
         await user.save();
 
-        resetOtpStore.delete(email.toLowerCase().trim());
-        console.log(`[ForgotPassword] Password reset successful for ${email}`);
+        // Clean up OTP record from MongoDB
+        await OTP.deleteOne({ _id: record._id });
+        console.log(`[ForgotPassword] Password reset successful in MongoDB for ${cleanEmail}`);
         res.json({ success: true, message: 'Password reset successfully. You can now login.' });
     } catch (err) {
         handleError(res, err, 'reset-password');

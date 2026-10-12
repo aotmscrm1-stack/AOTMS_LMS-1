@@ -348,9 +348,10 @@ export default function Auth() {
   };
 
   const handleForgotVerifyOtp = async (otpToVerify?: string) => {
-    const targetOtp = otpToVerify || forgotOtp;
+    if (forgotLoading) return;
+    const targetOtp = (otpToVerify || forgotOtp).trim();
     if (targetOtp.length !== 6) {
-      toast({ title: "Invalid OTP", description: "Enter the 6-digit code.", variant: "destructive" });
+      toast({ title: "Invalid OTP", description: "Enter the complete 6-digit code.", variant: "destructive" });
       return;
     }
     setForgotLoading(true);
@@ -358,7 +359,7 @@ export default function Auth() {
       const res = await fetch(`${API_URL}/auth/verify-reset-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: forgotEmail, otp: targetOtp })
+        body: JSON.stringify({ email: forgotEmail.trim().toLowerCase(), otp: targetOtp })
       });
       if (!res.ok) {
         const err = await parseJsonResponse<any>(res);
@@ -367,13 +368,14 @@ export default function Auth() {
       setForgotStep('reset');
       toast({ title: "OTP Verified!", description: "Now set your new password." });
     } catch (e: any) {
-      toast({ title: "Wrong OTP", description: e.message, variant: "destructive" });
+      toast({ title: "Verification Failed", description: e.message, variant: "destructive" });
     } finally {
       setForgotLoading(false);
     }
   };
 
   const handleForgotResetPassword = async () => {
+    if (forgotLoading) return;
     if (forgotNewPassword.length < 8) {
       toast({ title: "Too Short", description: "Password must be at least 8 characters.", variant: "destructive" });
       return;
@@ -870,7 +872,7 @@ export default function Auth() {
                         onChange={e => {
                           const val = e.target.value.replace(/\D/g, '').slice(0, 6);
                           setForgotOtp(val);
-                          if (val.length === 6) {
+                          if (val.length === 6 && !forgotLoading) {
                             handleForgotVerifyOtp(val);
                           }
                         }}

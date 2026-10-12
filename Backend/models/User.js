@@ -29,7 +29,6 @@ const ProfileSchema = new mongoose.Schema({
     mobile_number: { type: String },
     college_name: { type: String }, // User requested
     institute_name: { type: String }, // User requested
-    course_type: { type: String, default: 'full_time' },
     github_url: { type: String },
     linkedin_url: { type: String },
     title: { type: String },
@@ -75,12 +74,13 @@ const UserRoleSchema = new mongoose.Schema({
 UserRoleSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (doc, ret) => { ret.id = ret.user_id; delete ret._id; } });
 
 const OTPSchema = new mongoose.Schema({
-    email: { type: String, required: true, unique: true }, // acts as ID
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     otp: { type: String, required: true },
     full_name: { type: String },
     expires_at: { type: Date, required: true },
     failed_attempts: { type: Number, default: 0 },
-    created_at: { type: Date, default: Date.now }
+    verified: { type: Boolean, default: false },
+    created_at: { type: Date, default: Date.now, expires: 600 }
 });
 
 const VerifiedEmailSchema = new mongoose.Schema({
